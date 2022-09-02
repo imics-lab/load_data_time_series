@@ -33,8 +33,8 @@ Acknowledgement to and a good example of the WISDM format being pre-processed is
 
 [Lee B. Hinkle](https://userweb.cs.txstate.edu/~lbh31/), Texas State University, [IMICS Lab](https://imics.wp.txstate.edu/)  
 TODO:
-* Need to add final conversion from IR3 to Final Representation
-* IR2/3 label dtypes are object (they are really strings) - not sure if strings are the best answer or should use number along with "decoder" dictionary.
+* IR2/3 label dtypes are strings - not sure if strings are the best answer or should use number along with "decoder" dictionary.
+* log_info needs to be updated to dictionary format so we can read things like the channel names automatically.
 * Time is off by 6 hrs due to time zone issues - adjusted in Excel/csv but would be good to show it in the correct time zone.
 """
 
@@ -533,7 +533,8 @@ def twristar_load_dataset(
                 test_subj = [3]),
     keep_channel_list = ['accel_ttl'],
     one_hot_encode = True, # make y into multi-column one-hot, one for each activity
-    return_info_dict = False # return dict of meta info along with ndarrays
+    return_info_dict = False, # return dict of meta info along with ndarrays
+    suppress_warn = False # special case for stratified warning
     ):
     """Downloads the TWristAR dataset from Zenodo, processes the data, and
     returns arrays by separating into _train, _validate, and _test arrays for
@@ -597,8 +598,9 @@ def twristar_load_dataset(
     x_train = X[train_index]
     y_train = y[train_index]
     if (incl_val_group):
-        print("Warning: Due to limited subjects the validation group is a stratified")
-        print("90/10 split of the training group.  It is not subject independent.")
+        if not suppress_warn:
+            print("Warning: Due to limited subjects the validation group is a stratified")
+            print("90/10 split of the training group.  It is not subject independent.")
         # split training into training + validate using stratify - note that the
         # validation set is not subject independent (hard to achieve with limited
         # subjects).   The test set however is subject independent and as a result
@@ -654,8 +656,7 @@ if __name__ == "__main__":
                                  incl_val_group = True,
                                  keep_channel_list = ['accel_ttl','bvp',
                                                       'eda', 'p_temp'],
-                                 return_info_dict = True
-                             )
+                                 return_info_dict = True)
 
     headers = ("Array","shape", "data type")
     mydata = [("x_train:", x_train.shape, x_train.dtype),
@@ -665,10 +666,23 @@ if __name__ == "__main__":
             ("x_test:", x_test.shape, x_test.dtype),
             ("y_test:", y_test.shape, y_test.dtype)]
     print("\n",tabulate(mydata, headers=headers))
-    # print("\n----------- Contents of returned log_info ---------------")
-    # print(log_info)
+    print("\n----------- Contents of returned log_info ---------------")
+    print(log_info)
+    print("\n------------- End of returned log_info -----------------")
+    print("Get TWristAR with validation group, no warn, and bvp only\n")
+    x_train, y_train, x_valid, y_valid, x_test, y_test \
+                             = twristar_load_dataset(
+                                 incl_val_group = True,
+                                 keep_channel_list = ['bvp'],
+                                 return_info_dict = False,
+                                 suppress_warn = True)
+    print("This is a no output config - silent execution")
 
-"""#Save arrays to drive"""
+"""#Save arrays to drive
+This is common code and untested - TWristAR is small so download and processing is fast.
+
+For some of the larger datsets it is a big time benefit to store the arrays either before or after train/test split.  
+"""
 
 if False: #change to true to save files interactively
     output_dir = '/content/drive/MyDrive/Processed_Datasets/TWristAR/all-sensors'
