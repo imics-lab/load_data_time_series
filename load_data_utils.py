@@ -27,7 +27,7 @@ TODO:
 # These are global variables see this reference:
 # https://docs.python.org/3/faq/programming.html#what-are-the-rules-for-local-and-global-variables-in-python
 interactive = True
-log_info = "Example log file generated using load_data_utils.ipynb interactively.\n"
+log_info = "Example log file generated using load_data_utils.ipynb.\n"
 
 # This cell runs automatically when .py version called, skip to debug or run .pynb version
 interactive = False
@@ -154,7 +154,7 @@ if interactive:
     returned_str = csv_to_latex(csv_ffname='/content/csv_to_latex_test.csv')
     print(returned_str)
 
-def tab_npy(dict_name_npy):
+def tabulate_numpy_arrays(dict_name_npy):
     """Returns a string of tabulated data for numpy arrays passed as dictionary.
     args: dictionary format of {"npy_array_name":npy_array,...}.
     This one is pretty narrowly tested, mostly for trainX, testy etc."""
@@ -163,14 +163,14 @@ def tab_npy(dict_name_npy):
     from tabulate import tabulate
     headers = ("array","shape", "object type", "data type")
     meta_data = []
-    for i in my_dict :
-        meta_data.append ((i,str(my_dict[i].shape),str(my_dict[i].dtype)))
+    for i in dict_name_npy :
+        meta_data.append ((i,str(dict_name_npy[i].shape),str(dict_name_npy[i].dtype)))
     return(tabulate(meta_data, headers=headers))
 if interactive:
     randX = np.random.rand(42,10,3)
     randy = np.random.rand(42,6)
     my_dict = {"randX": randX, "randy":randy}
-    print(tab_npy(my_dict))
+    print(tabulate_numpy_arrays(my_dict))
 
 """# Main:  Examples of basic setup and text logging
 
@@ -202,8 +202,7 @@ if __name__ == "__main__":
     print ('\n------ Example of tabulated numpy array info ------')
     randX = np.random.rand(42,10,3)
     randy = np.random.rand(42,6)
-    my_dict = {"randX": randX, "randy":randy}
-    print(tab_npy(my_dict))
+    print(tabulate_numpy_arrays({"randX": randX, "randy":randy}))
 
 """# Example calling code - paste this into another notebook to use public version"""
 
@@ -222,11 +221,9 @@ if __name__ == "__main__":
 # if interactive:
 #     get_load_data_utils()
 
-# from load_data_utils import what_is_my_name
 # from load_data_utils import get_env_info
 # from load_data_utils import get_log_ffname
 
-# print('My name: ', what_is_my_name())
 # print('My env_info: \n', get_env_info())
 # print('A new log_ffname: ', get_log_ffname(log_file_dir = '/content/drive/My Drive/temp'))
 
