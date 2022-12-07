@@ -10,6 +10,8 @@ Original file is located at
 load_data_utils.ipynb  
 This notebook is a collection of utilities used within load data repo primarily when running in colab.
 
+When interactive is True each cell runs a small example, basically a mini unit test.  Main also runs several examples.  When saved as .py interactive gets set to False and these are skipped.
+
 It can be saved as a .py file to create callable functions, see examples below.
 
 Author:  [Lee B. Hinkle](https://userweb.cs.txstate.edu/~lbh31/), [IMICS Lab](https://imics.wp.txstate.edu/), Texas State University, 2022
@@ -17,9 +19,8 @@ Author:  [Lee B. Hinkle](https://userweb.cs.txstate.edu/~lbh31/), [IMICS Lab](ht
 <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/"><img alt="Creative Commons License" style="border-width:0" src="https://i.creativecommons.org/l/by-sa/4.0/88x31.png" /></a><br />This work is licensed under a <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">Creative Commons Attribution-ShareAlike 4.0 International License</a>.
 
 TODO:
-* get_env_info needs to be tested and fixed for different environments esp non-colab
 * Make option to use local time for log fname in addition to UTC time reported in colab 
-* shapes function does not seem to be callable outside of Jupyter notebook.
+* shapes function does not seem to be callable outside of Jupyter notebook, need to replace with tabulate type method.
 """
 
 # Interactive mode is intended for debugging as .ipynb
@@ -28,10 +29,11 @@ TODO:
 interactive = True
 log_info = "Example log file generated using load_data_utils.ipynb interactively.\n"
 
-# This cell runs automatically when .py version called
+# This cell runs automatically when .py version called, skip to debug or run .pynb version
 interactive = False
 
 if interactive:
+    print("Interactive mode on.")
     print("---- Contents of log_info ----")
     print(log_info)
 
@@ -39,8 +41,10 @@ from requests import get # for what is my name
 import os # for get_env_info
 import time # for timestamp in get_log_fname
 import numpy as np # for get_shapes
+import urllib.request # to get files from web w/o !wget
+import csv # to read csv files
 
-"""# Get environment info if colab plus a few helper functions"""
+"""# Start of the utility functions"""
 
 import sys # putting this here, not sure if function is worth it!
 # ref: https://stackoverflow.com/questions/53581278/test-if-notebook-is-running-on-google-colab
@@ -49,21 +53,6 @@ def running_in_colab():
     return ('google.colab' in sys.modules)
 if interactive:
     print(running_in_colab())
-
-#Helpful functions especially inside colab
-def what_is_my_name():
-    """returns the name of the running ipynb file if running in colab"""
-    #code is readily available on web - not original
-    if running_in_colab():
-        my_name = get('http://172.28.0.2:9000/api/sessions').json()[0]['name']
-    else:
-        # seems a bit complicated to get filename in any environment
-        # and hard coding the name here will make this not portable
-        # this should elminate the failure in non-colab instances though
-        my_name = 'not running in colab, filename unknown'
-    return my_name
-if interactive:
-    print("what_is_my_name returned " + what_is_my_name())
 
 def get_env_info():
     """returns the CPU and GPU info, only tested in colab.  Empty GPU indicates
@@ -81,10 +70,12 @@ def get_env_info():
         env_info = "/proc/cpuinfo not found, cannot determine CPUs\n"
 
     if running_in_colab():
-        #gpu_info = !nvidia-smi --query-gpu=gpu_name,driver_version,memory.total --format=csv
-        #env_info += 'GPU: ' + str(gpu_info[1]) + '\n'
         stream2 = os.popen('nvidia-smi --query-gpu=gpu_name,driver_version,memory.total --format=csv')
-        env_info += 'GPU: ' + stream2.read()
+        gpu_info = stream2.read()
+        if 'failed' in gpu_info:
+            env_info += 'GPU: NVIDIA-SMI failed, no GPU found'
+        else:
+            env_info += 'GPU: ' + gpu_info
     else:
         env_info += "Not running in colab, GPU info unknown"
     return env_info
@@ -95,11 +86,11 @@ def get_log_ffname(
     log_file_dir = '.',
     base_fname = "unnamed"):
     """checks that log_file_dir exists and returns unique full filename
-    which is concatenation of dir, base_name, and current UTC time"""
+    which is concatenation of log_file_dir, base_name, and current UTC time"""
     if (not os.path.isdir(log_file_dir)):
         print("WARNING: " + log_file_dir + " directory does not exist.")
     timestamp = time.strftime('%b-%d-%Y_%H%M', time.localtime()) #UTC time
-    log_fname = base_fname +'_'+timestamp + '.txt'
+    log_fname = base_fname +'_' + timestamp + '.txt'
     log_ffname = os.path.join(log_file_dir, log_fname)
     # I use fname for name only, and ffname for full path and name
     if (os.path.isfile(log_ffname)):
@@ -108,41 +99,92 @@ def get_log_ffname(
 if interactive:
     print("Returned full filename",get_log_ffname(base_fname = "interactive_test"))
 
-#Helper function since frequently checking and logging shapes
-#credit https://stackoverflow.com/users/4944093/george-petrov for name method
-#this method has name issues when being called.
-#this may not work as .py and also should be replaced with tabulate version.
-def namestr(obj, namespace):
-    return [name for name in namespace if namespace[name] is obj]
-def get_shapes(np_arr_list):
-    """Returns text, each line is shape and dtype for numpy array in list
-       example: print(get_shapes([X_train, X_test, y_train, y_test]))"""
-    shapes = ""
-    for i in np_arr_list:
-        my_name = namestr(i,globals())
-        shapes += (my_name[0] + " shape is " + str(i.shape) \
-            + " data type is " + str(i.dtype) + "\n")
-    return shapes
+def csv_to_latex(csv_ffname):
+    """A pretty rudimentary converter from csv to LaTeX to save some typing.
+    input is full filename of a .csv file, returns a long string of LaTeX.
+    This is mostly because I didn't want to throw away code I wrote for a
+    specific paper.  There are probably much more capable libraries!"""
+    latex_str = '%Table generated from ' + csv_ffname + ' by csv_to_latex\n'
+    def escape(line):
+        """Escapes special LaTeX characters by prefixing them with backslash, 
+        credit: https://github.com/narimiran/tably/blob/master/tably.py"""
+        for char in '#$%&_}{':
+            line = [column.replace(char, '\\'+char) for column in line]
+        line = ''.join(line) # added so that a string not list of strings is returned
+        return line
+    # Note: the frequent backslashes in LaTeX must be escaped in Python strings
+    #print('%Table generated from',csv_ffname,'by csv_to_latex')
+    col_sep = '&' # for import as LaTeX table
+    end_line = ' \\\\' # end of table row with underline for latex
+    hline = '\\hline'
+    # Have to read the first row to figure out number of columns required.
+    with open(csv_ffname, newline='') as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if(reader.line_num==1):  # this is the first row (header)
+                num_columns = len(row)
+                cols = ''
+                for i in (range(num_columns)):
+                    cols += 'c' # to make the {ccc} thing in LaTeX
+                table_begin = '\\begin{table}[h]\n' + \
+                    '  \\caption{insert caption here}\n' + \
+                    '\\label{tab:insert_label}\n' + \
+                    '\\begin{tabular}{' + cols + '}\n' + \
+                    '\\hline\n'
+                latex_str += table_begin
+            if(len(row) != num_columns):
+                print("Warning: row",reader.line_num,"has different number of elements than header row")
+            my_line = ''
+            for item in row:
+                my_line += item + col_sep
+            my_line = my_line[:-1] # get rid of last col_sep
+            my_line += end_line
+            latex_str += my_line + '\n'
+    table_end = '\\hline\n' + '\\end{tabular}\n' + '\\end{table}'
+    latex_str += table_end + '\n'
+    return latex_str
 if interactive:
-    # Just some empty arrays using a typical shape for a better example
-    x_train = np.zeros((15, 300, 3)) # 15 samples with 300 steps of 3 signals
-    y_train = np.zeros((15))
-    x_test = np.zeros((5, 300, 3)) # 15 samples with 300 steps of 3 signals
-    y_test = np.zeros((5))
-    print("Get shapes returned\n" + get_shapes([x_train, y_train, x_test, y_test]))
+    import csv
+    # Setup a few test files ref: https://docs.python.org/3/library/csv.html
+    # also https://levelup.gitconnected.com/building-csv-strings-in-python-32934aed5a9e
+    data = [['Name', 'Age', 'Salary'], ['Bob', '45', '75000'], ['Andrew', '34', '79000']]
+    with open('csv_to_latex_test.csv', 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerows(data)
+    returned_str = csv_to_latex(csv_ffname='/content/csv_to_latex_test.csv')
+    print(returned_str)
 
-"""# Examples of basic setup and text logging
+def tab_npy(dict_name_npy):
+    """Returns a string of tabulated data for numpy arrays passed as dictionary.
+    args: dictionary format of {"npy_array_name":npy_array,...}.
+    This one is pretty narrowly tested, mostly for trainX, testy etc."""
+    # it seems silly to pass the variable name as a string, but I haven't found
+    # a method that is portable/callable to get the variable name.
+    from tabulate import tabulate
+    headers = ("array","shape", "object type", "data type")
+    meta_data = []
+    for i in my_dict :
+        meta_data.append ((i,str(my_dict[i].shape),str(my_dict[i].dtype)))
+    return(tabulate(meta_data, headers=headers))
+if interactive:
+    randX = np.random.rand(42,10,3)
+    randy = np.random.rand(42,6)
+    my_dict = {"randX": randX, "randy":randy}
+    print(tab_npy(my_dict))
+
+"""# Main:  Examples of basic setup and text logging
 
 """
 
 if __name__ == "__main__":
-    log_info = "Running load_data_utils __main__ (example and basic tests)\n"
-    log_info += "what_is_my_name() returned " + what_is_my_name() + "\n"
+    log_info += "Running load_data_utils __main__ (example and basic tests)\n"
+    log_info += "running_in_colab() returned " + str(running_in_colab())+"\n"
     log_info += "get_env_info returned\n" + get_env_info() + "\n"
-    log_info += "get_log_ffname_returned " + get_log_ffname(base_fname = "main_test")
+    log_info += "get_log_ffname_returned: " + get_log_ffname(base_fname = "main_test")
     print(log_info) # monitor the info to be written when debugging
 
     # This is the key part - gets a unique file name and saves results to file.
+    # If you run this cell repeatedly each run appends the info.
     save_log = True
     log_ffname = get_log_ffname(
         log_file_dir = '.',
@@ -151,27 +193,85 @@ if __name__ == "__main__":
     # run at end of each pass so each one is recorded in case of crash.
     # alternative is to run both and generate seperate files for each.
     if save_log:
-        print("Writing to " + log_ffname)
+        print("Writing log_info to " + log_ffname)
         with open(log_ffname, "a") as file_object:
             file_object.write(log_info)
+    print ('\n------ Example of .csv converted to LaTeX------')
+    urllib.request.urlretrieve('https://people.sc.fsu.edu/~jburkardt/data/csv/ford_escort.csv', filename='ford_escort.csv')
+    print(csv_to_latex(csv_ffname='ford_escort.csv'))
+    print ('\n------ Example of tabulated numpy array info ------')
+    randX = np.random.rand(42,10,3)
+    randy = np.random.rand(42,6)
+    my_dict = {"randX": randX, "randy":randy}
+    print(tab_npy(my_dict))
 
-"""# Example calling code"""
+"""# Example calling code - paste this into another notebook to use public version"""
 
-# util_ffname = os.path.join(my_path + '/load_data_utils.py')
-# shutil.copy(util_ffname,'load_data_utils.py')
+# def get_load_data_utils():
+#     """checks for local file, if none downloads from IMICS repository.
+#     Assumes a global my_dir has been defined (default is my_dir = ".")
+#     :return: nothing"""
+#     fname = 'load_data_utils.py'
+#     ffname = os.path.join(my_dir,fname)
+#     if (os.path.exists(ffname)):
+#         if verbose:
+#             print ("Local load_data_utils.py found, skipping download")
+#     else:
+#         print("Downloading",fname, "from IMICS git repo")
+#         urllib.request.urlretrieve("https://raw.githubusercontent.com/imics-lab/load_data_time_series/main/load_data_utils.py", filename=fname)
+# if interactive:
+#     get_load_data_utils()
 
 # from load_data_utils import what_is_my_name
 # from load_data_utils import get_env_info
-# from load_data_utils import get_log_fname
-# #from load_data_utils import get_shapes # I don't think this is callable...
+# from load_data_utils import get_log_ffname
 
 # print('My name: ', what_is_my_name())
 # print('My env_info: \n', get_env_info())
-# print('A new log_fname: ', get_log_fname(log_file_dir = '/content/drive/My Drive/temp'))
+# print('A new log_ffname: ', get_log_ffname(log_file_dir = '/content/drive/My Drive/temp'))
 
-"""# Examples appending full_fname to save figures, pdf, etc.
+"""# The code gutter - some with issues some just examples to have around
+Examples to split and append ffname to save figures, pdf, etc.
 Sources from older code so not fully tested in this context. 
 """
+
+# This works fine in colab to find the .ipynb name, but fails as callable function.
+# def what_is_my_name():
+#     """returns the name of the running ipynb file if running in colab"""
+#     #code is readily available on web - not original
+#     if running_in_colab():
+#         my_name = get('http://172.28.0.2:9000/api/sessions').json()[0]['name']
+#     else:
+#         # seems a bit complicated to get filename in any environment
+#         # and hard coding the name here will make this not portable
+#         # this should elminate the failure in non-colab instances though
+#         my_name = 'not running in colab, filename unknown'
+#     return my_name
+# if interactive:
+#     print("what_is_my_name returned " + what_is_my_name())
+
+#Helper function since frequently checking and logging shapes
+#credit https://stackoverflow.com/users/4944093/george-petrov for name method
+#this method has name issues when being called.
+#this may not work as .py and also should be replaced with tabulate version.
+# def namestr(obj, namespace):
+#     return [name for name in namespace if namespace[name] is obj]
+# def get_shapes(np_arr_list):
+#     """Returns text, each line is shape and dtype for numpy array in list
+#        example: print(get_shapes([X_train, X_test, y_train, y_test]))"""
+#     shapes = ""
+#     for i in np_arr_list:
+#         my_name = namestr(i,globals())
+#         shapes += (my_name[0] + " shape is " + str(i.shape) \
+#             + " data type is " + str(i.dtype) + "\n")
+#     return shapes
+# if interactive:
+#     # Just some empty arrays using a typical shape for a better example
+#     x_train = np.zeros((15, 300, 3)) # 15 samples with 300 steps of 3 signals
+#     y_train = np.zeros((15))
+#     x_test = np.zeros((5, 300, 3)) # 15 samples with 300 steps of 3 signals
+#     y_test = np.zeros((5))
+#     print("Get shapes returned\n" + get_shapes([x_train, y_train, x_test, y_test]))
 
 # #save the last plot (a current active fig) as pdf
 # full_fig_fname = log_full_fname.split('.')[0] + '_loss.pdf'
