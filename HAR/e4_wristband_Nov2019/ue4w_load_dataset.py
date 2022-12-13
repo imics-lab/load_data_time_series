@@ -68,8 +68,7 @@ def get_ue4w_zipfile(zip_fname):
     return
 if interactive:
     zip_fname = '1568381971_A01F11.zip'
-    zip_ffname = os.path.join(my_dir,zip_fname)
-    get_ue4w_zipfile(zip_ffname)
+    get_ue4w_zipfile(zip_fname = zip_fname)
 
 def unzip_e4_file(zip_ffname):
     """checks for local copy, if none unzips the e4 zipfile in dir ffname
@@ -91,6 +90,7 @@ def unzip_e4_file(zip_ffname):
             print("Error: ", zip_ffname, " not found, exiting")
             return
 if interactive:
+    zip_ffname = os.path.join(my_dir,zip_fname)
     unzip_e4_file(zip_ffname)
 
 interactive = False
@@ -133,6 +133,7 @@ def df_from_e4_csv (ffname,col_labels):
 if interactive:
     # Note: IBI.csv is the inter-beat interval, a calculated value with a 
     # different format.  HR.csv is also calculated from BVP but format is same.
+    working_dir = '1568381971_A01F11' # by zipfile name
     ffname = working_dir + '/ACC.csv'
     col_labels = ['accel_x', 'accel_y', 'accel_z']
     ir1_acc_df = df_from_e4_csv(ffname, col_labels)
@@ -281,6 +282,11 @@ def get_ir2_from_ir1(df, time_steps, stride):
     X = X[:,0,:,:] # I admit I don't understand why this dimension appears...
     y = np.lib.stride_tricks.sliding_window_view(y, shapey)[::stride, :]
     sub = np.lib.stride_tricks.sliding_window_view(sub, shapesub)[::stride, :]
+    # this was part of the clean function - rest is not needed for unlabeled
+    y = y[:,0] # collapse columns
+    y = y[np.newaxis].T  # convert to single column array
+    sub = sub[:,0] # repeat for sub array
+    sub = sub[np.newaxis].T
     if g_verbose:
         print('X,y,sub array shapes after sliding window', X.shape, y.shape, sub.shape)
     return X, y, sub, channel_list
@@ -295,8 +301,8 @@ if interactive:
     print("Returned all_channel_list", all_channel_list)
 
 def limit_channel_ir3(ir3_X, 
-                      all_channel_list = ['accel_x', 'accel_y', 'accel_z', 'accel_ttl', 'bvp', 'eda', 'p_temp'],
-                      keep_channel_list = ['accel_ttl','bvp', 'eda', 'p_temp']):
+                      all_channel_list,# = ['accel_x', 'accel_y', 'accel_z', 'accel_ttl', 'bvp', 'eda', 'p_temp'],
+                      keep_channel_list):# = ['accel_ttl','bvp', 'eda', 'p_temp']):
     """Pass the full ir3_X array with all channels, the stored all_channel_list
     that was extracted from the ir1 dataframe column names, and a 
     keep_channel_list.  Matching channels will be kept, all others dropped.
@@ -315,13 +321,13 @@ if interactive:
     print("all_channel_list", all_channel_list)
     print("starting X shape", my_X.shape)
     print("first row", my_X[0,0,:])
-    my_new_X = limit_channel_ir3(my_X,
+    my_new_X = limit_channel_ir3(my_X, all_channel_list = all_channel_list,
                                  keep_channel_list = ['accel_ttl','p_temp'])
     print("ending X shape", my_new_X.shape)
     print("first row", my_new_X[0,0,:])
 
 def ue4w_load_dataset(
-    zip_flist = ['1568381971_A01F11.zip'], # TODO: support multiple files
+    zip_flist = ['1568381971_A01F11.zip','1568436702_A01F11.zip','1568636849_A01F11.zip'],
     verbose = False,
     keep_channel_list = ['accel_ttl','bvp', 'eda', 'p_temp'],
     return_info_dict = False # return dict of meta info along with ndarrays
@@ -329,6 +335,10 @@ def ue4w_load_dataset(
     global g_verbose
     g_verbose = verbose
     print("Iterating through", len(zip_flist), "files in ue4w dataset")
+    # the hard coded 96 and 7 need to be fixed for other sample rates, channels
+    ir3_X = np.zeros(shape=(1,96,len(keep_channel_list)), dtype = 'float32')
+    ir3_y = np.full(shape=(1,1), fill_value='n/a',dtype='<U10') # unicode 10 char
+    ir3_sub = np.zeros(shape=(1,1),dtype=np.uint8) # one subject number per entry
     for zip_fname in zip_flist:
         zip_ffname = os.path.join(my_dir,zip_fname)
         get_ue4w_zipfile(zip_fname)
@@ -340,50 +350,80 @@ def ue4w_load_dataset(
         if g_verbose:
             print(my_df.head())
         my_X, y, sub, all_channel_list = get_ir2_from_ir1(my_df, 96, 96)
-        X = limit_channel_ir3(my_X) # default is to drop component accel
-        return X, y, sub, all_channel_list
-        #print('Tag info (button presses) from tags.csv')
-        #tag_ffname = working_dir + '/tags.csv'
-        #show_tag_time(tag_ffname)
+        my_X = limit_channel_ir3(my_X, all_channel_list= all_channel_list,
+                              keep_channel_list = keep_channel_list) # default is to drop component accel
+        ir3_X = np.vstack([ir3_X, my_X])
+        ir3_y = np.vstack([ir3_y, y])
+        ir3_sub = np.vstack([ir3_sub, sub])
+    X = np.delete(ir3_X, (0), axis=0) 
+    y = np.delete(ir3_y, (0), axis=0) 
+    sub = np.delete(ir3_sub, (0), axis=0)
+    sub = sub.astype(np.uint8) # convert from float to int
+    return X, y, sub, keep_channel_list
 
 """# Main Function"""
 
 if __name__ == "__main__":
+    # Test the defaults
     X, y, sub, ch_list = ue4w_load_dataset()
     headers = ("Array","shape", "data type")
     mydata = [("X:", X.shape, X.dtype),
             ("y:", y.shape, y.dtype),
             ("sub:", sub.shape, sub.dtype)]
     print("\n",tabulate(mydata, headers=headers))
+    print("Channels:", ch_list)
 
-# Putting this here because it makes the main hard to read.
-zip_flist = ['1568381971_A01F11.zip',
-             '1568436702_A01F11.zip',
-            '1568636849_A01F11.zip',
-            '1568692614_A01F11.zip',
-            '1568724870_A01F11.zip',
-            '1568780227_A01F11.zip',
-            '1568810932_A01F11.zip',
-            '1568865992_000000.zip',
-            '1568898255_000000.zip',
-            '1568951690_000000.zip',
-            '1568985613_000000.zip',
-            '1569039959_000000.zip',
-            '1569210942_000000.zip',
-            '1569243177_000000.zip',
-            '1569387025_A01F11.zip',
-            '1569469882_A01F11.zip',
-            '1569502137_A01F11.zip',
-            '1569557287_A01F11.zip',
-            '1569588599_A01F11.zip',
-            '1569643907_A01F11.zip',
-            '1569728107_A01F11.zip',
-            '1569816129_A01F11.zip',
-            '1569847922_A01F11.zip',
-            '1569902565_A01F11.zip',
-            '1569934211_A01F11.zip',
-            '1569971145_A01F11.zip',
-            '1569989395_A01F11.zip',
-            '1570021036_A01F11.zip',
-            '1570077840_A01F11.zip',
-            '1570108887_A01F11.zip']
+    # Test for single subject with only accel X shape should be (11926, 96, 1)
+    X, y, sub, ch_list = ue4w_load_dataset(zip_flist = ['1568381971_A01F11.zip'],
+                                           keep_channel_list = ['accel_ttl'])
+    headers = ("Array","shape", "data type")
+    mydata = [("X:", X.shape, X.dtype),
+            ("y:", y.shape, y.dtype),
+            ("sub:", sub.shape, sub.dtype)]
+    print("\n",tabulate(mydata, headers=headers))
+    print("Channels:", ch_list)
+
+# run this cell to save the numpy arrays
+if interactive:  
+    readme = 'Unlabeled data from UE4W Repository, three files\n'
+    readme += 'this version for fusion learned reps paper.\n'
+    readme += 'Lee Hinkle, IMICS lab, December 13, 2022\n'
+    readme += ' Array    shape           data type\n'
+    readme += '        -------  --------------  -----------\n'
+    readme += 'X:       (33523, 96, 4)  float32\n'
+    readme += 'y:       (33523, 1)      <U10\n'
+    readme += 'sub:     (33523, 1)      uint8\n'       
+    readme += "         ['accel_ttl', 'bvp', 'eda', 'p_temp']'\n"
+
+    with open(my_dir+'/README.txt', "w") as file_object:
+        file_object.write(readme)
+    np.save(my_dir + '/'+'X.npy',X)
+    np.save(my_dir + '/'+'y.npy',y)
+    np.save(my_dir + '/'+'sub.npy',sub)
+
+"""# Example code that can be used to call this function when saved as .py"""
+
+# def get_ue4w_loader():
+#     """checks for local file, if none downloads from IMICS repository.
+#     Assumes a global my_dir has been defined (default is my_dir = ".")
+#     :return: nothing"""
+#     ffname = os.path.join(my_dir,'ue4w_load_dataset.py')
+#     if (os.path.exists(ffname)):
+#         print ("Local twristar_load_dataset.py found, skipping download")
+#     else:
+#         print("Downloading twristar_load_dataset.py from IMICS git repo")
+#         urllib.request.urlretrieve("https://raw.githubusercontent.com/imics-lab/load_data_time_series/main/HAR/e4_wristband_Nov2019/ue4w_load_dataset.py", filename="ue4w_load_dataset.py")
+# if interactive:
+#     get_ue4w_loader()
+
+# from ue4w_load_dataset import ue4w_load_dataset
+# # kludge for now - names should be derived from returned info from loader
+# t_names = ['Downstairs', 'Jogging', 'Sitting', 'Standing', 'Upstairs', 'Walking']
+# channel_list = ['accel_ttl','bvp','eda', 'p_temp'] # all channels to be used
+#     x_train, y_train, x_valid, y_valid, x_test, y_test, log_info \
+#                                 = twristar_load_dataset(
+#                                     incl_val_group = True,
+#                                     keep_channel_list = ch_list,
+#                                     return_info_dict = True)
+#     if verbose:
+#         print (log_info)
