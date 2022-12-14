@@ -161,7 +161,7 @@ def tabulate_numpy_arrays(dict_name_npy):
     # it seems silly to pass the variable name as a string, but I haven't found
     # a method that is portable/callable to get the variable name.
     from tabulate import tabulate
-    headers = ("array","shape", "object type", "data type")
+    headers = ("array","shape", "data type")
     meta_data = []
     for i in dict_name_npy :
         meta_data.append ((i,str(dict_name_npy[i].shape),str(dict_name_npy[i].dtype)))
@@ -171,6 +171,20 @@ if interactive:
     randy = np.random.rand(42,6)
     my_dict = {"randX": randX, "randy":randy}
     print(tabulate_numpy_arrays(my_dict))
+
+def channel_powerset(ch_list):
+    """creates a powerset of all channel combos except the empty set.
+    param: ch_list - list of channel names
+    returns: a list of lists of all channel name combinations"""
+    # credit: https://towardsdatascience.com/the-subsets-powerset-of-a-set-in-python-3-18e06bd85678
+    # powerset is also available in more-itertools
+    from itertools import chain, combinations
+    return chain.from_iterable(combinations(ch_list, r+1) for r in range(len(ch_list)))
+    # note the modified indexing above - this is to eliminate the 1st empty set
+if (interactive):
+    sth = ['A','B','C'] 
+    for x in channel_powerset(sth):
+        print(list(x)) #print(', '.join(list(x))) # to print w/o brackets
 
 """# Main:  Examples of basic setup and text logging
 
@@ -203,6 +217,9 @@ if __name__ == "__main__":
     randX = np.random.rand(42,10,3)
     randy = np.random.rand(42,6)
     print(tabulate_numpy_arrays({"randX": randX, "randy":randy}))
+    print ('\n------ Example of a powerset (all channel combos) ------')
+    for x in channel_powerset(['Ch1','Ch2','Ch3']):
+        print(list(x))
 
 """# Example calling code - paste this into another notebook to use public version"""
 
