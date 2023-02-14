@@ -21,12 +21,12 @@ Only the timestamp 'nanoseconds' and accelerometer data (accel_x/y/z) is importe
 Data is segmented into 500 samples (~5s) using as much of the sample as possible (incomplete segments are discarded)
 
 Returns: Tuple of Numpy arrays:   
-(x_train, y_train),(x_validation, y_validation)\[optional\],(x_test, y_test) 
+(x_train, y_train),(x_valid, y_valid)\[optional\],(x_test, y_test) 
 
-* x_train\/validation\/test: containing float64 with shapes (num_samples, 500, {3,4,1})
-* y_train\/validation\/test: containing int8 with shapes (num_samples 0-9)
+* x_train\/valid\/test: containing float64 with shapes (num_samples, 500, {3,4,1})
+* y_train\/valid\/test: containing int8 with shapes (num_samples 0-9)
 
-Default train/validation/test split is by subject with a best effort to keep gender mix and distributed by height among the three categories.
+Default train/valid/test split is by subject with a best effort to keep gender mix and distributed by height among the three categories.
 Split is 60%/20%/20%
 
 Example usage:  
@@ -45,9 +45,11 @@ Author:  Lee B. Hinkle, IMICS Lab, Texas State University, 2021
 <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/"><img alt="Creative Commons License" style="border-width:0" src="https://i.creativecommons.org/l/by-sa/4.0/88x31.png" /></a><br />This work is licensed under a <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">Creative Commons Attribution-ShareAlike 4.0 International License</a>.
 
 TODOs:
-* Figure out how to download source directly from https://drive.google.com/file/d/0B5VcW5yHhWhibWxGRTZDd0dGY2s/edit. this example seems newer than version used for UniMiB https://keras.io/examples/timeseries/timeseries_weather_forecasting/
-* Implement one-hot encoding using libraries and also non-one-hot encode case
-* Need to implement incl_xyz_accel and incl_rms_accel
+* Still can't figure out how to download source directly from https://drive.google.com/file/d/0B5VcW5yHhWhibWxGRTZDd0dGY2s/edit.
+* Implement one-hot encoding using libraries and also non-one-hot encode case with int
+* Change dtypes to take up less space
+* verbose needs to be global and cleaned up
+* add gyro channels and implement list based channel selection versus bools
 """
 
 import os
@@ -63,13 +65,42 @@ import numpy as np
 from tabulate import tabulate # for verbose tables
 from tensorflow.keras.utils import to_categorical # for one-hot encoding
 
+interactive = True # run example calls for each function as Jupyter Notebook
+
+interactive = False # skip to run as interactive, executes main as .py
+
+# Trying to figure out how to download automatically to eliminate drive mount
+# gdown doesn't work even with confirm=t option - could be google
+# limiting downloads from scripts (the link works fine when signed in)
+# https://github.com/wkentaro/gdown/issues/43
+# tried AnirudhJayant06 colab suggestion of
+# !pip install --upgrade --no-cache-dir gdown
+# !gdown "0B5VcW5yHhWhibWxGRTZDd0dGY2s&confirm=t" # Download MobiAct zipfile
+# still no luck and search for alternative locations came up empty.
+
+def get_mobiact():
+    zip_fname = 'MobiAct_Dataset_v1.0.zip'
+    if (not os.path.isfile(zip_fname)):
+        print(zip_fname, 'not found.\nPlease go to',\
+        'https://drive.google.com/uc?id=0B5VcW5yHhWhibWxGRTZDd0dGY2s')
+        print('to download, then copy the file to current working directory')
+        print('upload to colab takes ~5min and gives "not a zipfile" error until finished')
+        quit() # to exit when run as python script
+    elif (not os.path.isdir('MobiAct_Dataset')):
+        print("Unzipping MobiAct Dataset")
+        shutil.unpack_archive(zip_fname,'.','zip')
+    else:
+        print("Using existing archive")
+if interactive:
+    get_mobiact()
+
 def get_mobiact_fname_mdata(path_in):
     """returns dataframe with filename and metadata from mobiact directory
     args: path_in is location of files e.g. JOG, JUM, etc directories
     returns: pandas dataframe with one row for each file.
     columns are full filename, activity, subject, group {unassigned, train, validate, test}"""
     df = pd.DataFrame() # new empty dataframe
-    GRP = ['train','validation','test']
+    GRP = ['train','valid','test']
     ACT = ['JOG','JUM','STD','STN','STU','WAL']
     for i in ACT:    
         sub_path = path_in + i + '/'
@@ -84,9 +115,12 @@ def get_mobiact_fname_mdata(path_in):
         temp['SUB'] = temp['fname'].str.extract(r'(\d+)') # uses pd method and regex get SUB from fname
         # both columns are type object, would be better to set but didn't work first time
         df = pd.concat([df,temp], ignore_index=True ) # concat needs two df, add regardless of index   
-    # add column for validation, test groups by subject, others are marked train
+    # add column for valid, test groups by subject, others are marked train
     df["SUB"] = pd.to_numeric(df["SUB"]) #convert from object to INT32
     return df
+if interactive:
+    df_flist = get_mobiact_fname_mdata('MobiAct_Dataset/')
+    display(df_flist.head())
 
 def assign_group(df,split_subj):
     """returns dataframe with filename and metadata from mobiact directory
@@ -96,9 +130,18 @@ def assign_group(df,split_subj):
     """
     df['GRP'] = 'unassigned' # add column
     df.loc[df['SUB'].isin(split_subj['train_subj']),'GRP'] = 'train'
-    df.loc[df['SUB'].isin(split_subj['validation_subj']),'GRP'] = 'validation'
+    df.loc[df['SUB'].isin(split_subj['valid_subj']),'GRP'] = 'valid'
     df.loc[df['SUB'].isin(split_subj['test_subj']),'GRP'] = 'test'
     return df
+if interactive:
+    split_subj = {'train_subj':[2,4,5,9,10,16,18,20,23,24,26,27,28,32,34,35,
+                            36,38,42,45,46,47,48,49,50,51,52,53,54,57],
+                'valid_subj':[3,6,8,11,12,22,37,40,43,56],
+                'test_subj':[7,19,21,25,29,33,39,41,44,55]}
+    df_flist = assign_group(df_flist, split_subj)
+    display(df_flist.head())
+    print('Use iloc to access a single element')
+    print(df_flist['fname'].iloc[0])
 
 def read_mobiact_file(full_filename):
     """returns dataframe from Mobiact txt file accel_xyz data, skips metadata, labels columns"""
@@ -106,24 +149,30 @@ def read_mobiact_file(full_filename):
     # json better? https://docs.python.org/3/library/json.html#module-json initial tries weren't successful
     df.columns = ["nanoseconds", "accel_x", "accel_y", "accel_z"]
     return df
+if interactive:
+    my_df = read_mobiact_file(df_flist['fname'].iloc[0]) # iloc value is row
+    display(my_df.head())
 
-def add_total_accel(df_in, delete_xyz=False):
+def add_total_accel(df_in):
     """computes rms of accel_x/y/z data, removed 1g component, adds accel_total column"""
     # compute rms accel and remove 1g due to gravity, removes rotational dependency
     dfx = df_in.pow(2)[['accel_x','accel_y','accel_z']] #square each accel
     df_sum = dfx.sum(axis=1) #add sum of squares, new 1 col df
     df_in.loc[:,'accel_total'] = df_sum.pow(0.5)-9.8  # sqrt + remove 1g gravity component
     del dfx, df_sum
-    if delete_xyz:
-        return df_in.drop(columns = ['accel_x','accel_y','accel_z'])
-    else: 
-        return df_in
+    return df_in
+if interactive:
+    my_df =  add_total_accel(my_df)
+    display(my_df.head())
 
 def to_abs_time(df):
     """subtracts the value of 1st nanosecond sample from all samples"""
     start_time = df.loc[0,'nanoseconds']
     df.loc[:,'nanoseconds'] = df.loc[:,'nanoseconds'] - start_time
     return df
+if interactive:
+    my_df =  to_abs_time(my_df)
+    display(my_df.head())
 
 def get_df_from_file(fname, start_discard=100, end_discard=100):
     """processes mobiact file fname and returns dataframe of accel values
@@ -132,11 +181,14 @@ def get_df_from_file(fname, start_discard=100, end_discard=100):
             end_discard = number of final samples to delete (default = 200)
     output: pandas dataframe of shape (samples, accel_total)"""
     df = read_mobiact_file(fname)
-    df = add_total_accel(df,delete_xyz=True)
+    df = add_total_accel(df)
     df = df.drop(columns=['nanoseconds']) # note this loses some time info - datetime better?
     df.drop(df.head(start_discard).index,inplace=True) # drop first rows
     df.drop(df.tail(end_discard).index,inplace=True) # drop last rows
     return df
+if interactive:
+    my_df = get_df_from_file(df_flist['fname'].iloc[0])
+    display(my_df.head())
 
 def split_df_npX(df, num_samples = 500):
     """converts dataframe (samples, total_accel) into 3D numpy array of shape
@@ -150,8 +202,14 @@ def split_df_npX(df, num_samples = 500):
     if (temp.shape[0]//num_samples)==0:
         print ("WARNING:  File contains less than ",num_samples,"samples and is discarded")
     temp2 = temp[0:num_samples*(temp.shape[0]//num_samples)] # truncate to multiple of num_samples
-    tempX = temp2.reshape(-1,num_samples,1) # won't work with out truncation
+    # df.shape[1] is the number of columns, which should be preserved as the third dimension
+    tempX = temp2.reshape(-1,num_samples,df.shape[1]) # won't work with out truncation
     return tempX
+if interactive:
+    np_temp = split_df_npX(my_df)
+    print("Array shape",np_temp.shape)
+    with np.printoptions(precision=3, suppress=True): # make output shorter
+        print(np_temp[:5]) # first 5 entries
 
 def mobiact_adl_load_dataset(
     verbose = True,
@@ -160,33 +218,44 @@ def mobiact_adl_load_dataset(
     #  -mount your google drive with MobiAct zip file (link is above)
     #  -navigate to the file using File menu to left
     #  -right click on file and select 'copy path', paste in next line
-    orig_zipfile = '/content/drive/My Drive/Datasets/MobiAct_Dataset_v1.0.zip',
+    # orig_zipfile = '/content/drive/My Drive/Datasets/MobiAct_Dataset_v1.0.zip',
     incl_xyz_accel = False, #include component accel_x/y/z in ____X data
-    incl_rms_accel = True, #add rms value of accel_x/y/z in ____X data
-    incl_val_group = False, #True => returns x/y_test, x/y_validation, x/y_train
-                           #False => combine test & validation groups
+    incl_ttl_accel = True, #add rms value of accel_x/y/z in ____X data
+    incl_val_group = False, #True => returns x/y_test, x/y_valid, x/y_train
+                           #False => combine test & valid groups
     split_subj = {'train_subj':[2,4,5,9,10,16,18,20,23,24,26,27,28,32,34,35,
                                 36,38,42,45,46,47,48,49,50,51,52,53,54,57],
-                   'validation_subj':[3,6,8,11,12,22,37,40,43,56],
+                   'valid_subj':[3,6,8,11,12,22,37,40,43,56],
                    'test_subj':[7,19,21,25,29,33,39,41,44,55]},
     one_hot_encode = True
     ):
-    #unzip original dataset from google drive map into colab session
-    if (not os.path.isdir('/content/MobiAct_Dataset')):
-        print("Unzipping MobiAct Dataset")
-        shutil.unpack_archive(orig_zipfile,'/content','zip')
-    else:
-        print("Using existing archive in colab")
-    df_flist = get_mobiact_fname_mdata('/content/MobiAct_Dataset/')
+
+    """Loads and processes the MobiAct dataset accel channels for ADL activities.
+
+    Args:
+        verbose (bool): controls level of output (default is True)
+        incl_xyz_accel (bool): returns the component acceleration (default is False)
+        incl_ttl_accel (bool): returns the magnitude of accel vector minus 1g
+        incl_val_group (bool): return includes x_valid and y_valid arrays (default is False)
+        split_sub (dict): subject numbers assigned to train, valid, test groups
+        one_hot_encode (bool): return one-hot-encoded y arrays
+
+    Returns:
+        trainX, trainy, validX, validy, testX, testy np arrays
+    """
+
+    get_mobiact()
+    df_flist = get_mobiact_fname_mdata('MobiAct_Dataset/')
     df_flist = assign_group(df_flist,split_subj)
     #Note:  STU, STN files don't contain 900 samples so 200 discard start/finish + 500 time step doesn't work
     # Create zero'd np arrays otherwise accumulates when run more than once
     # should be a better way to do this
-    trainX = np.zeros(shape=(1,500,1)) #otherwise accumulates when run more than once
+    # FIXME:  Third dimension must follow accel return values - in all three lines
+    trainX = np.zeros(shape=(1,500,4)) #otherwise accumulates when run more than once
     trainy = np.zeros(shape=(1,6))
-    validationX = np.zeros(shape=(1,500,1))
-    validationy = np.zeros(shape=(1,6))
-    testX = np.zeros(shape=(1,500,1))
+    validX = np.zeros(shape=(1,500,4))
+    validy = np.zeros(shape=(1,6))
+    testX = np.zeros(shape=(1,500,4))
     testy = np.zeros(shape=(1,6))
     for i in df_flist.index:
         if ((df_flist['GRP'][i])=='train'):
@@ -205,11 +274,11 @@ def mobiact_adl_load_dataset(
             if ((df_flist['ACT'][i])=='STU'): tempy[:,4]=1
             if ((df_flist['ACT'][i])=='WAL'): tempy[:,5]=1
             trainy = np.vstack([trainy, tempy])
-        if ((df_flist['GRP'][i])=='validation'):
+        if ((df_flist['GRP'][i])=='valid'):
             #print ("processing test file", df_flist['fname'][i])
             df = get_df_from_file(df_flist['fname'][i])
             tempX = split_df_npX(df)
-            validationX = np.vstack([validationX, tempX])
+            validX = np.vstack([validX, tempX])
             tempy = np.zeros(shape=(tempX.shape[0],6)) # 6 is number of ACT
             #one hot encoding of ACT
             if ((df_flist['ACT'][i])=='JOG'): tempy[:,0]=1
@@ -218,7 +287,7 @@ def mobiact_adl_load_dataset(
             if ((df_flist['ACT'][i])=='STN'): tempy[:,3]=1
             if ((df_flist['ACT'][i])=='STU'): tempy[:,4]=1
             if ((df_flist['ACT'][i])=='WAL'): tempy[:,5]=1
-            validationy = np.vstack([validationy, tempy])
+            validy = np.vstack([validy, tempy])
         if ((df_flist['GRP'][i])=='test'):
             #print ("processing test file", df_flist['fname'][i])
             df = get_df_from_file(df_flist['fname'][i])
@@ -233,30 +302,73 @@ def mobiact_adl_load_dataset(
             if ((df_flist['ACT'][i])=='STU'): tempy[:,4]=1
             if ((df_flist['ACT'][i])=='WAL'): tempy[:,5]=1
             testy = np.vstack([testy, tempy])
-    #delete first row placeholders
+    # delete first row placeholders
     trainX = np.delete(trainX, (0), axis=0) 
     trainy = np.delete(trainy, (0), axis=0)
-    validationX = np.delete(validationX, (0), axis=0) 
-    validationy = np.delete(validationy, (0), axis=0)
+    validX = np.delete(validX, (0), axis=0) 
+    validy = np.delete(validy, (0), axis=0)
     testX = np.delete(testX, (0), axis=0)
     testy = np.delete(testy, (0), axis=0)
+
+    # delete channels using numpy.delete(arr, obj, axis=None)
+    # this should be replaced with channel list, also returns empty if both False
+    if (incl_ttl_accel == False):
+        trainX = np.delete(trainX, 3, axis = 2)
+        validX = np.delete(validX, 3, axis = 2)
+        testX = np.delete(testX, 3, axis = 2)
+    if (incl_xyz_accel == False):
+        trainX = np.delete(trainX, [0,1,2], axis = 2)
+        validX = np.delete(validX, [0,1,2], axis = 2)
+        testX = np.delete(testX, [0,1,2], axis = 2)
     if (incl_val_group):
-        return trainX, trainy, validationX, validationy, testX, testy
+        return trainX, trainy, validX, validy, testX, testy
     else:
-        return np.concatenate((trainX, validationX), axis=0),\
-            np.concatenate((trainy, validationy), axis=0),\
+        return np.concatenate((trainX, validX), axis=0),\
+            np.concatenate((trainy, validy), axis=0),\
             testX, testy
 
 if __name__ == "__main__":
     print("Downloading and processing MobiAct dataset, ADL Portion")
     x_train, y_train, x_test, y_test = mobiact_adl_load_dataset()
-    print("\nMobiAct ADL returned arrays:")
+    print("\nMobiAct ADL returned arrays with default settings:")
     print("x_train shape ",x_train.shape," y_train shape ", y_train.shape)
     print("x_test shape  ",x_test.shape," y_test shape  ",y_test.shape)
+    print(80*'-')
+    x_train, y_train, x_valid, y_valid, x_test, y_test = mobiact_adl_load_dataset(incl_xyz_accel = True, incl_val_group= True)
+    print("\nMobiAct ADL returned arrays, incl_xyz_accel and incl_val_grp are True:")
+    print("x_train shape ",x_train.shape," y_train shape ", y_train.shape)
+    print("x_valid shape  ",x_valid.shape," y_valid shape  ",y_valid.shape)
+    print("x_test shape  ",x_test.shape," y_test shape  ",y_test.shape)
 
-#change to True for example/testing including
-if (False):
-    x_train, y_train, x_validation, y_validation, x_test, y_test = mobiact_adl_load_dataset(incl_val_group=True)
-    print("x/y_train shape ",x_train.shape,y_train.shape)
-    print("x/y_validation shape ",x_validation.shape,y_validation.shape)
-    print("x/y_test shape  ",x_test.shape,y_test.shape)
+if False: # mount drive and change to true to save files interactively
+    import time
+    #output_dir = '/content/drive/MyDrive/Processed_Datasets/MobiAct/All_Accel_Numpys'
+    output_dir = '.' # if running locally or you want to download files manually
+    if (os.path.isdir(output_dir)):
+        #quick check for existing files, '.ipynb_checkpoints' file 
+        #makes it more complicated to see if directory is empty
+        if (not os.path.isfile(output_dir + '/x_train.npy')):
+            summary = "MobiAct data\n"
+            summary += "Saved to " + output_dir + "\n"
+            summary += "Generated by MobiAct_ADL_load_dataset.ipynb\n"
+            summary += " on " + time.strftime('%b-%d-%Y_%H%M', time.localtime())+'\n'
+            summary += "this version for ???? work\n"
+            info_fname = output_dir +'/'+'README.txt'
+            full_info = summary
+            print(full_info)
+
+            with open(info_fname, "w") as file_object:
+                file_object.write(full_info)
+
+            if True:
+                np.save(output_dir + '/'+'x_train.npy',x_train)
+                np.save(output_dir + '/'+'y_train.npy',y_train)
+                np.save(output_dir + '/'+'x_valid.npy',x_valid)
+                np.save(output_dir + '/'+'y_valid.npy',y_valid)
+                np.save(output_dir + '/'+'x_test.npy',x_test)
+                np.save(output_dir + '/'+'y_test.npy',y_test)
+
+        else:
+            print("Error "+output_dir+" contains x_train.npy, please delete files")
+    else:
+        print(output_dir + " not found, please create directory")
