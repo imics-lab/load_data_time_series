@@ -18,6 +18,8 @@ Set interactive to true to run the Jupyter Notebook version.  Note most of the c
 [Lee B. Hinkle](https://userweb.cs.txstate.edu/~lbh31/), Texas State University, [IMICS Lab](https://imics.wp.txstate.edu/)  
 TODO:
 * This is in-progress - current focus is on the Gesture dataset so testing will need to be done with the others.
+* Issue with !gdown not running in a function is a pain.
+* assign_ints_ir1_labels() seems to still return an int64 instead of int8
 """
 
 import os
@@ -57,7 +59,8 @@ verbose = False # to limit the called functions output
 
 if interactive:
     print ("What?")
-# Weird - gdown fails when called inside function.  Hack for now...
+#Weird - gdown fails when called inside function.  Hack for now...
+
 # !gdown "11OWxTejlTlR53s3RZbSNZdyMdFiN4dZl&confirm=t" # Gesture Phase Raw IR1s in zip
 # shutil.unpack_archive('Gesture_Phase_Raw_IR1.zip', my_dir, 'zip')
 # ir1_df = pd.read_pickle("a1_raw.pkl")
@@ -66,7 +69,44 @@ if interactive:
 # # ir1_df['sub'] = [ ord(x) - 96 for x in ir1_df['sub']] # ord is unicode char
 # ir1_df.head()
 
+
 """# Shared transforms"""
+
+def assign_ints_ir1_labels(df, label_mapping_dict):
+    """Uses the mapping in the passed dictionary to assign integers to each
+    string value predictably.  This is important because all labels may not
+    be represented in each IR1 and strings take up too much room in IR2.
+    Args:
+        df - an IR1 dataframe with categorical label column
+        label_mapping_dict - dict of dicts for each label column. See code.
+    Returns:
+        df - an updated IR1+ dataframe"""
+    # Want to predictably convert the label strings into integers.
+    # The sklearn label encoder is certainly an option but already have
+    # a Pandas dataframe.   More importantly I want to encode the values
+    # using all possible options not just the ones present in this particular
+    # dataframe.   That means building a dictionary of the label mappings
+    # which may even include labels not in the dataset at all, such as the
+    # case with PSG-Audio.   Finally, I want to avoid ever having strings in the
+    # numpy arrays - not an issue for small datasets but a big memory user
+    # for larger ones.
+    # Credit to this nice writeup https://pbpython.com/categorical-encoding.html
+    if verbose:
+        print("assign_ints_ir1_labels() converting categorical strings to ints")
+        print("df['label'] value counts")
+        print(df['label'].value_counts())
+        if df['label'].dtype.name == 'category':
+            dict( zip( df['label'].cat.codes, df['label'] ) ) # shows mapping Pandas is using.
+    df = df.replace(label_mapping_dict)
+    df['label']=df['label'].astype('int8') # TODO this only works with single label
+    return df
+
+if interactive:
+    # This label mapping for Gesture-Phase-Segmentation dataset is in the order
+    # of the readme.txt.  A second label entry can be added - see url above.
+    label_map_gps = {"label":     {"Rest": 0, "Preparation": 1, "Stroke": 2,
+                                   "Hold": 3, "Retraction": 4}}
+    ir1_df = assign_ints_ir1_labels(ir1_df, label_mapping_dict = label_map_gps)
 
 def get_ir2_from_ir1(df):
     """slice the IR1 dataframe into sliding window segments of
@@ -87,8 +127,8 @@ def get_ir2_from_ir1(df):
     if verbose:
         print('Channels in X:',channel_list)
     X = df[channel_list].to_numpy(dtype = 'float32')
-    #y = df['label'].to_numpy(dtype = 'int8') # doesn't work for strings
-    y = df['label'].to_numpy(dtype='<U10')
+    y = df['label'].to_numpy(dtype = 'int8') # doesn't work for strings
+    #y = df['label'].to_numpy(dtype='<U10') # use assign_ints_ir1_labels first
     sub = df['sub'].to_numpy(dtype = 'int8')
     if verbose:
         print('X,y,sub array shapes before sliding window', X.shape, y.shape, sub.shape)
