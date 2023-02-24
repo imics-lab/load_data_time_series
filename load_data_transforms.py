@@ -56,13 +56,15 @@ verbose = False # to limit the called functions output
 """# Get IR1 dataframes for interactive testing."""
 
 if interactive:
-    !gdown "11OWxTejlTlR53s3RZbSNZdyMdFiN4dZl&confirm=t" # Gesture Phase Raw IR1s in zip
-    shutil.unpack_archive('Gesture_Phase_Raw_IR1.zip', my_dir, 'zip')
-    ir1_df = pd.read_pickle("a1_raw.pkl")
-    # ir1_df.rename(columns={"phase": "label"}, inplace = True, errors="raise") # phase was GPS dataset specific
-    # ir1_df.rename(columns={"subject": "sub"}, inplace = True, errors="raise") # subject versus sub too
-    # ir1_df['sub'] = [ ord(x) - 96 for x in ir1_df['sub']] # ord is unicode char
-    ir1_df.head()
+    print ("What?")
+# Weird - gdown fails when called inside function.  Hack for now...
+# !gdown "11OWxTejlTlR53s3RZbSNZdyMdFiN4dZl&confirm=t" # Gesture Phase Raw IR1s in zip
+# shutil.unpack_archive('Gesture_Phase_Raw_IR1.zip', my_dir, 'zip')
+# ir1_df = pd.read_pickle("a1_raw.pkl")
+# # ir1_df.rename(columns={"phase": "label"}, inplace = True, errors="raise") # phase was GPS dataset specific
+# # ir1_df.rename(columns={"subject": "sub"}, inplace = True, errors="raise") # subject versus sub too
+# # ir1_df['sub'] = [ ord(x) - 96 for x in ir1_df['sub']] # ord is unicode char
+# ir1_df.head()
 
 """# Shared transforms"""
 
