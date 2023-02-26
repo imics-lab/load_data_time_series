@@ -49,7 +49,7 @@ interactive = True # for exploring data and functions interactively
 verbose = True
 
 # dataset parameters
-time_steps = 32
+time_steps = 32 
 stride = 8
 
 interactive = False # don't run if interactive, automatically runs for .py version
@@ -64,11 +64,7 @@ if interactive:
 # !gdown "11OWxTejlTlR53s3RZbSNZdyMdFiN4dZl&confirm=t" # Gesture Phase Raw IR1s in zip
 # shutil.unpack_archive('Gesture_Phase_Raw_IR1.zip', my_dir, 'zip')
 # ir1_df = pd.read_pickle("a1_raw.pkl")
-# # ir1_df.rename(columns={"phase": "label"}, inplace = True, errors="raise") # phase was GPS dataset specific
-# # ir1_df.rename(columns={"subject": "sub"}, inplace = True, errors="raise") # subject versus sub too
-# # ir1_df['sub'] = [ ord(x) - 96 for x in ir1_df['sub']] # ord is unicode char
-# ir1_df.head()
-
+# ir1_df.head(5)
 
 """# Shared transforms"""
 
@@ -110,16 +106,25 @@ if interactive:
 
 def get_ir2_from_ir1(df):
     """slice the IR1 dataframe into sliding window segments of
-    time_steps length and return X, y, sub ndarrays.
+    time_steps length and return X, y, sub, ss_times ndarrays.
     If stride = time_steps there is no overlap of the sliding window.
     This version does not use append, better for RAM
     df: pandas datetime indexed dataframe columns - channel(s), label, sub
     Global params used
     time_steps: number of samples in window, will discard a partial final window
     stride:  how far to move window, no overlap if equal to time_steps.
+    Returns:
+    X : ndarray of float32 shape(instances,timesteps,channels))
+    y : ndarray of int8 labels of shape (instances, labels)
+    sub : ndarray of int16 subject numbers shape (instances,1)
+    ss_times : ndarray of datetime64 containing the start and stop time of 
+        each window for label cleaning shape (instances, 2)
+    channel_list : list of channels, df column names minus 'label' and 'sub'
     """    
     # this was copied from SHL with improved memory capabilities
     # TODO:  Update with multi-label version from PSG-Audio
+    # TODO:  Should confirm datetimes are contiguous and warn if not.
+    
     # the channel list is in dataframe but not in the numpy arrays
     channel_list = list(df.columns)
     channel_list.remove('label') # need to make sure this is defined for IR1
@@ -129,7 +134,7 @@ def get_ir2_from_ir1(df):
     X = df[channel_list].to_numpy(dtype = 'float32')
     y = df['label'].to_numpy(dtype = 'int8') # doesn't work for strings
     #y = df['label'].to_numpy(dtype='<U10') # use assign_ints_ir1_labels first
-    sub = df['sub'].to_numpy(dtype = 'int8')
+    sub = df['sub'].to_numpy(dtype = 'int16') # for datasets with sub #s > 255
     if verbose:
         print('X,y,sub array shapes before sliding window', X.shape, y.shape, sub.shape)
     #https://numpy.org/devdocs/reference/generated/numpy.lib.stride_tricks.sliding_window_view.html
@@ -140,24 +145,33 @@ def get_ir2_from_ir1(df):
     X = X[:,0,:,:] # I admit I don't understand why this dimension appears...
     y = np.lib.stride_tricks.sliding_window_view(y, shapey)[::stride, :]
     sub = np.lib.stride_tricks.sliding_window_view(sub, shapesub)[::stride, :]
+    # Build a numpy array of the start and stop timestamps for each sliding
+    # window - the IR1 indices.  This is to help label cleaning if needed.
+    timestamps_np = df.index.to_numpy(dtype = 'datetime64')
+    shape_ts = (time_steps,) # samples (rows to include) and only one column
+    timestamps_np = np.lib.stride_tricks.sliding_window_view(timestamps_np, shape_ts)[::stride, :]
+    start_times = timestamps_np[:,0]
+    stop_times = timestamps_np[:,-1]
+    ss_times = np.column_stack((start_times,stop_times))
     if verbose:
-        print('X,y,sub array shapes after sliding window', X.shape, y.shape, sub.shape)
-    return X, y, sub, channel_list
+        print('X,y,sub,ss_times array shapes after sliding window', X.shape, y.shape, sub.shape, ss_times.shape)
+    return X, y, sub, ss_times, channel_list
 if interactive:
-    my_X, my_y, my_sub, all_channel_list = get_ir2_from_ir1(ir1_df)
+    my_X, my_y, my_sub, my_ss_times, all_channel_list = get_ir2_from_ir1(ir1_df)
     headers = ("array","shape", "object type", "data type")
     mydata = [("my_X:", my_X.shape, type(my_X), my_X.dtype),
             ("my_y:", my_y.shape ,type(my_y), my_y.dtype),
-            ("my_sub:", my_sub.shape, type(my_sub), my_sub.dtype)]
+            ("my_sub:", my_sub.shape, type(my_sub), my_sub.dtype),
+            ("my_ss_times:", my_ss_times.shape, type(my_ss_times), my_ss_times.dtype)]
     print("IR2 array info")
     print(tabulate(mydata, headers=headers))
     print("Returned all_channel_list", all_channel_list)
 
-def clean_ir2(X, y, sub):
+def clean_ir2(X, y, sub, ss_times):
     """removes sliding windows containing NaN, multiple labels, or multiple
     subject numbers.  Collapses y, sub to column arrays.
-    Returns cleaned versions of X, y, sub ndarrays"""
-    # Copied directly from SHL.  Yay!
+    Returns cleaned versions of X, y, sub, ss_times ndarrays"""
+    # TODO:  This really should be split into multiple functions
     # Check for NaN
     nans = np.argwhere(np.isnan(X))
     num_nans = np.unique(nans[:,0]) #[:,0] just 1st column index of rows w/ NaN
@@ -172,6 +186,7 @@ def clean_ir2(X, y, sub):
     X = X[idx]
     y = y[idx]
     sub = sub[idx]
+    ss_times = ss_times[idx]
     # repeat and confirm NaNs have been removed
     nans = np.argwhere(np.isnan(X))
     num_nans = np.unique(nans[:,0]) #[:,0] accesses just 1st column
@@ -191,27 +206,28 @@ def clean_ir2(X, y, sub):
     X = X[idx]
     y = y[idx]
     sub = sub[idx]
+    ss_times = ss_times[idx]
     # TODO check for multiple subjects in window
     y = y[:,0] # collapse columns
     y = y[np.newaxis].T  # convert to single column array
     sub = sub[:,0] # repeat for sub array
     sub = sub[np.newaxis].T
-    return X, y, sub
+    return X, y, sub, ss_times
 if interactive:
-    my_X, my_y, my_sub = clean_ir2(my_X, my_y, my_sub)
+    my_X, my_y, my_sub, my_ss_times = clean_ir2(my_X, my_y, my_sub, my_ss_times)
     print('IR2 shapes after cleaning', my_X.shape, my_y.shape, my_sub.shape)
     headers = ("array","shape", "object type", "data type")
     mydata = [("my_X:", my_X.shape, type(my_X), my_X.dtype),
             ("my_y:", my_y.shape ,type(my_y), my_y.dtype),
-            ("my_sub:", my_sub.shape, type(my_sub), my_sub.dtype)]
+            ("my_sub:", my_sub.shape, type(my_sub), my_sub.dtype),
+            ("my_ss_times:", my_ss_times.shape, type(my_ss_times), my_ss_times.dtype)]
     print("IR2 array info")
     print(tabulate(mydata, headers=headers))
 
-def drop_label_ir2_ir3(X, y, sub, label_to_drop):
+def drop_label_ir2_ir3(X, y, sub, ss_times, label_to_drop):
     """removes windows with label = label_to_drop
-    This is primarily used to remove invalid windows, such as 'unknown' label
+    This is primarily used to remove invalid windows, such as 'unknown' = 99
     Returns updated version of X, y, sub"""
-    # Also copied directly from SHL - double Yay!
     idx = []
     for i in range(y.shape[0]):
         if (y[i] == label_to_drop):
@@ -222,13 +238,14 @@ def drop_label_ir2_ir3(X, y, sub, label_to_drop):
     X = X[idx]
     y = y[idx]
     sub = sub[idx]
-    return X, y, sub
+    ss_times = ss_times[idx]
+    return X, y, sub, ss_times
 if interactive:
     print("Label counts before drop")
     unique, counts = np.unique(my_y, return_counts=True)
     print (np.asarray((unique, counts)).T)
     print('X, y, sub array shapes before label drop', my_X.shape, my_y.shape, my_sub.shape)
-    my_X, my_y, my_sub = drop_label_ir2_ir3(my_X, my_y, my_sub, 'Undefined')
+    my_X, my_y, my_sub, my_ss_times = drop_label_ir2_ir3(my_X, my_y, my_sub,my_ss_times, 2)
     print("Label counts after drop")
     unique, counts = np.unique(my_y, return_counts=True)
     print (np.asarray((unique, counts)).T)
@@ -236,13 +253,14 @@ if interactive:
     headers = ("array","shape", "object type", "data type")
     mydata = [("my_X:", my_X.shape, type(my_X), my_X.dtype),
             ("my_y:", my_y.shape ,type(my_y), my_y.dtype),
-            ("my_sub:", my_sub.shape, type(my_sub), my_sub.dtype)]
+            ("my_sub:", my_sub.shape, type(my_sub), my_sub.dtype),
+            ("my_ss_times:", my_ss_times.shape, type(my_ss_times), my_ss_times.dtype)]
     print("IR2 array info after label drop")
     print(tabulate(mydata, headers=headers))
 
 def limit_channel_ir3(ir3_X, 
-                      all_channel_list = ['accel_x', 'accel_y', 'accel_z', 'accel_ttl', 'bvp', 'eda', 'p_temp'],
-                      keep_channel_list = ["accel_ttl"]):
+                      all_channel_list,
+                      keep_channel_list):
     """Pass the full ir3_X array with all channels, the stored all_channel_list
     that was extracted from the ir1 dataframe column names, and a 
     keep_channel_list.  Matching channels will be kept, all others dropped.
@@ -261,7 +279,7 @@ if interactive:
     print("all_channel_list", all_channel_list)
     print("starting X shape", my_X.shape)
     print("first row", my_X[0,0,:])
-    my_new_X = limit_channel_ir3(my_X,
-                                 keep_channel_list = ['accel_ttl','p_temp'])
+    my_new_X = limit_channel_ir3(my_X, all_channel_list,
+                                 keep_channel_list = ['lhx', 'lhy', 'lhz'])
     print("ending X shape", my_new_X.shape)
     print("first row", my_new_X[0,0,:])
