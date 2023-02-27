@@ -37,6 +37,8 @@ TODO:
 * log_info needs to be updated to dictionary format so we can read things like the channel names automatically.
 * Time is off by 6 hrs due to time zone issues - adjusted in Excel/csv but would be good to show it in the correct time zone.
 * Need to incorporate session numbers or just use the alternate .csv files where validation was 'fake' subs 11 and 22 which were just a few of the sessions from subjects 1 and 2.  This was done in the Semi-Supervised version of the loader for WISHWell but not integrated back into this version.
+
+# Import Libraries and Common Load Dataset Code (from IMICS public repo)
 """
 
 import os
@@ -55,6 +57,23 @@ from time import gmtime, strftime, localtime #for displaying Linux UTC timestamp
 from datetime import datetime, date
 import urllib.request # to get files from web w/o !wget
 
+def get_py_file(fname, url):
+    """checks for local file, if none downloads from URL.    
+    :return: nothing"""
+    #fname = 'load_data_utils.py'
+    #ffname = os.path.join(my_dir,fname)
+    if (os.path.exists(fname)):
+        print ("Local",fname, "found, skipping download")
+    else:
+        print("Downloading",fname, "from IMICS git repo")
+        urllib.request.urlretrieve(url, filename=fname)
+
+get_py_file(fname = 'load_data_utils.py', url = 'https://raw.githubusercontent.com/imics-lab/load_data_time_series/main/load_data_utils.py')
+get_py_file(fname = 'load_data_transforms.py', url = 'https://raw.githubusercontent.com/imics-lab/load_data_time_series/main/load_data_transforms.py')
+
+import load_data_transforms as xform
+import load_data_utils as utils
+
 """# Global Parameters"""
 
 # environment and execution parameters
@@ -70,8 +89,15 @@ verbose = True
 # dataset parameters
 # frequency = 32 - note this is hardcoded due to the unique sample freqencies
 # that differ between the individual e4 sensors
-time_steps = 96 # three seconds at 32Hz
-stride = 32 # one second step for each sliding window
+xform.time_steps = 96 # three seconds at 32Hz
+xform.stride = 32 # one second step for each sliding window
+# The label_map_<dataset> contains a mapping from strings to ints for all
+# possible labels in the entire dataset.   This allows for predictable conversion
+# regardless of the slices.  I'm using 99 for 'unknown' which will be dropped
+# to avoid the confusion of shifing by 1 place, zero indexed etc.
+label_map_twristar = {"label":     {"Downstairs": 0, "Jogging": 1, "Sitting": 2,
+                                "Standing": 3, "Upstairs": 4, "Walking": 5,
+                                "Undefined": 99}}
 
 interactive = False # don't run if interactive, automatically runs for .py version
 verbose = False # to limit the called functions output
@@ -290,136 +316,7 @@ if interactive:
     print ("Label Counts - # samples before sliding window")
     print (ir1_df['label'].value_counts())
 
-def get_ir2_from_ir1(df):
-    """slice the IR1 dataframe into sliding window segments of
-    time_steps length and return X, y, sub ndarrays.
-    If stride = time_steps there is no overlap of the sliding window.
-    This version does not use append, better for RAM
-    df: pandas datetime indexed dataframe columns - channel(s), label, sub
-    Global params used
-    time_steps: number of samples in window, will discard a partial final window
-    stride:  how far to move window, no overlap if equal to time_steps.
-    """    
-    # this was copied from SHL with improved memory capabilities
-    # the channel list is in dataframe but not in the numpy arrays
-    channel_list = list(df.columns)
-    channel_list.remove('label') # need to make sure this is defined for IR1
-    channel_list.remove('sub') # ditto - should probably add a check
-    if verbose:
-        print('Channels in X:',channel_list)
-    X = df[channel_list].to_numpy(dtype = 'float32')
-    #y = df['label'].to_numpy(dtype = 'int8') # doesn't work for strings
-    y = df['label'].to_numpy(dtype='<U10')
-    sub = df['sub'].to_numpy(dtype = 'int8')
-    if verbose:
-        print('X,y,sub array shapes before sliding window', X.shape, y.shape, sub.shape)
-    #https://numpy.org/devdocs/reference/generated/numpy.lib.stride_tricks.sliding_window_view.html
-    shapex = (time_steps,X.shape[1]) # samples (rows to include) and n-dim of original (all channels)
-    shapey = (time_steps,) # samples (rows to include) and only one column
-    shapesub = (time_steps,) # samples (rows to include) and only one column
-    X = np.lib.stride_tricks.sliding_window_view(X, shapex)[::stride, :]
-    X = X[:,0,:,:] # I admit I don't understand why this dimension appears...
-    y = np.lib.stride_tricks.sliding_window_view(y, shapey)[::stride, :]
-    sub = np.lib.stride_tricks.sliding_window_view(sub, shapesub)[::stride, :]
-    if verbose:
-        print('X,y,sub array shapes after sliding window', X.shape, y.shape, sub.shape)
-    return X, y, sub, channel_list
-if interactive:
-    my_X, my_y, my_sub, all_channel_list = get_ir2_from_ir1(ir1_df)
-    headers = ("array","shape", "object type", "data type")
-    mydata = [("my_X:", my_X.shape, type(my_X), my_X.dtype),
-            ("my_y:", my_y.shape ,type(my_y), my_y.dtype),
-            ("my_sub:", my_sub.shape, type(my_sub), my_sub.dtype)]
-    print("IR2 array info")
-    print(tabulate(mydata, headers=headers))
-    print("Returned all_channel_list", all_channel_list)
-
-def clean_ir2(X, y, sub):
-    """removes sliding windows containing NaN, multiple labels, or multiple
-    subject numbers.  Collapses y, sub to column arrays.
-    Returns cleaned versions of X, y, sub ndarrays"""
-    # Copied directly from SHL.  Yay!
-    # Check for NaN
-    nans = np.argwhere(np.isnan(X))
-    num_nans = np.unique(nans[:,0]) #[:,0] just 1st column index of rows w/ NaN
-    if verbose:
-        print(num_nans.shape[0], "NaN entries found, removing")
-    idx = ~np.isnan(X).any(axis=2).any(axis=1)
-    # this warrants some explanation!
-    # any(axis=1) and 2 collapses channels and samples
-    # good axis explanation https://www.sharpsightlabs.com/blog/numpy-axes-explained/
-    # the ~ negates so NaN location are now False in the idx which is then
-    # used to filter out the bad windows below
-    X = X[idx]
-    y = y[idx]
-    sub = sub[idx]
-    # repeat and confirm NaNs have been removed
-    nans = np.argwhere(np.isnan(X))
-    num_nans = np.unique(nans[:,0]) #[:,0] accesses just 1st column
-    if (nans.size!=0):
-        print("WARNING! Cleaned output arrays still contain NaN entries")
-        print("execute print(X[99]) # to view single sample")
-    # Now get rid of segments with multiple labels
-    # Not happy with this code, must be a better way but it seems to work...
-    idx = []
-    for i in range(y.shape[0]):
-        if np.all(y[i] == y[i][0]):
-            idx.append(True)
-            
-        else:
-            idx.append(False)
-            #print('Discarding Row:', i)
-    X = X[idx]
-    y = y[idx]
-    sub = sub[idx]
-    # TODO check for multiple subjects in window
-    y = y[:,0] # collapse columns
-    y = y[np.newaxis].T  # convert to single column array
-    sub = sub[:,0] # repeat for sub array
-    sub = sub[np.newaxis].T
-    return X, y, sub
-if interactive:
-    my_X, my_y, my_sub = clean_ir2(my_X, my_y, my_sub)
-    print('IR2 shapes after cleaning', my_X.shape, my_y.shape, my_sub.shape)
-    headers = ("array","shape", "object type", "data type")
-    mydata = [("my_X:", my_X.shape, type(my_X), my_X.dtype),
-            ("my_y:", my_y.shape ,type(my_y), my_y.dtype),
-            ("my_sub:", my_sub.shape, type(my_sub), my_sub.dtype)]
-    print("IR2 array info")
-    print(tabulate(mydata, headers=headers))
-
-def drop_label_ir2_ir3(X, y, sub, label_to_drop):
-    """removes windows with label = label_to_drop
-    This is primarily used to remove invalid windows, such as 'unknown' label
-    Returns updated version of X, y, sub"""
-    # Also copied directly from SHL - double Yay!
-    idx = []
-    for i in range(y.shape[0]):
-        if (y[i] == label_to_drop):
-            idx.append(False)
-        else:
-            idx.append(True)
-            #print('Discarding Row:', i)
-    X = X[idx]
-    y = y[idx]
-    sub = sub[idx]
-    return X, y, sub
-if interactive:
-    print("Label counts before drop")
-    unique, counts = np.unique(my_y, return_counts=True)
-    print (np.asarray((unique, counts)).T)
-    print('X, y, sub array shapes before label drop', my_X.shape, my_y.shape, my_sub.shape)
-    my_X, my_y, my_sub = drop_label_ir2_ir3(my_X, my_y, my_sub, 'Undefined')
-    print("Label counts after drop")
-    unique, counts = np.unique(my_y, return_counts=True)
-    print (np.asarray((unique, counts)).T)
-    print('IR2 shapes after label drop', my_X.shape, my_y.shape, my_sub.shape)
-    headers = ("array","shape", "object type", "data type")
-    mydata = [("my_X:", my_X.shape, type(my_X), my_X.dtype),
-            ("my_y:", my_y.shape ,type(my_y), my_y.dtype),
-            ("my_sub:", my_sub.shape, type(my_sub), my_sub.dtype)]
-    print("IR2 array info after label drop")
-    print(tabulate(mydata, headers=headers))
+"""# Use Shared Transforms for IR1 to Final Array Output"""
 
 def get_ir3(
     working_dir = os.path.join(my_dir,'TWristAR_temp'), # dir will be created
@@ -447,8 +344,9 @@ def get_ir3(
     """
     get_TWristAR()
     # create blank ndarrays to append to
-    ir3_X = np.zeros(shape=(1,time_steps,7), dtype = 'float32')
-    ir3_y = np.full(shape=(1,1), fill_value='n/a',dtype='<U10') # unicode 10 char
+    ir3_X = np.zeros(shape=(1,xform.time_steps,7), dtype = 'float32')
+    ir3_y = np.zeros(shape=(1,1),dtype='int8') # newer int method
+    # ir3_y = np.full(shape=(1,1), fill_value='n/a',dtype='<U10') # unicode 10 char
     ir3_sub = np.zeros(shape=(1,1),dtype=int) # one subject number per entry
     for i in zip_flist:
         zip_ffname = os.path.join(my_dir,'TWristAR',i)
@@ -468,9 +366,13 @@ def get_ir3(
         ir1_df['label'].value_counts()
         if verbose:
             print ("Label Counts - # samples before sliding window\n",ir1_df['label'].value_counts())
-        ir2_X, ir2_y, ir2_sub, channel_list = get_ir2_from_ir1(ir1_df)
-        ir2_X, ir2_y, ir2_sub = clean_ir2(ir2_X, ir2_y, ir2_sub)
-        ir2_X, ir2_y, ir2_sub = drop_label_ir2_ir3(ir2_X, ir2_y, ir2_sub, 'Undefined')
+        ir1_df = xform.assign_ints_ir1_labels(ir1_df, label_mapping_dict = label_map_twristar)
+        ir2_X, ir2_y, ir2_sub, ir2_ss_time, channel_list = xform.get_ir2_from_ir1(ir1_df)
+        ir2_X, ir2_y, ir2_sub, ir2_ss_time = xform.clean_ir2(ir2_X, ir2_y, ir2_sub, ir2_ss_time)
+        ir2_X, ir2_y, ir2_sub, ir2_ss_time = xform.drop_label_ir2_ir3(ir2_X, ir2_y, ir2_sub, ir2_ss_time, 99)
+        # ir2_X, ir2_y, ir2_sub, channel_list = get_ir2_from_ir1(ir1_df)
+        # ir2_X, ir2_y, ir2_sub = clean_ir2(ir2_X, ir2_y, ir2_sub)
+        # ir2_X, ir2_y, ir2_sub = drop_label_ir2_ir3(ir2_X, ir2_y, ir2_sub, 'Undefined')
         ir3_X = np.vstack([ir3_X, ir2_X])
         ir3_y = np.vstack([ir3_y, ir2_y])
         ir3_sub = np.vstack([ir3_sub, ir2_sub])
@@ -484,7 +386,7 @@ def get_ir3(
 
     xys_info = 'TWristAR e4 wristband structured 6-activity zip files\n'
     xys_info += '\n'.join([str(elem) for elem in zip_flist]) # conv list to string
-    xys_info += '\nTime steps =' + str(time_steps) + ', Step =' + str(stride) + ', no resample\n'
+    xys_info += '\nTime steps =' + str(xform.time_steps) + ', Step =' + str(xform.stride) + ', no resample\n'
     xys_info += 'Final Shapes\n'
     xys_info += "X shape " + str(X.shape) + " dtype = " + str(X.dtype) + "\n"
     xys_info += "y shape " + str(y.shape) + " dtype = " + str(y.dtype) + "\n"
@@ -647,6 +549,9 @@ def twristar_load_dataset(
 
 """# Main is setup to be a demo and bit of unit test."""
 
+#print(utils.tabulate_numpy_arrays({'ir2_X': ir2_X, 'ir2_y':ir2_y, 'ir2_sub':ir2_sub,
+#                            'ir2_ss_time':ir2_ss_time}))
+
 if __name__ == "__main__":
     verbose = False
     print("Get TWristAR using defaults - simple and easy!")
@@ -713,57 +618,3 @@ if __name__ == "__main__":
     print("\n----------- Contents of returned log_info ---------------")
     print(log_accelxyz)
     print("\n------------- End of returned log_info -----------------")
-
-"""#Save arrays to drive
-This is common code and untested - TWristAR is small so download and processing is fast.
-
-For some of the larger datsets it is a big time benefit to store the arrays either before or after train/test split.  
-"""
-
-if False: #change to true to save files interactively
-    output_dir = '/content/drive/MyDrive/Processed_Datasets/TWristAR/all-sensors'
-    if (os.path.isdir(output_dir)):
-        #quick check for existing files, '.ipynb_checkpoints' file 
-        #makes it more complicated to see if directory is empty
-        if (not os.path.isfile(output_dir + '/X.npy')):
-            summary = "TWristAR data\n"
-            summary += "Saved to " + output_dir + "\n"
-            summary += "Generated by TWristAR_load_data.ipynb"
-            summary += " on " + time.strftime('%b-%d-%Y_%H%M', time.localtime())
-            summary += "this version for fusion of learned representation work\n"
-            summary += "contains data from all 4 e4 sensors"
-            info_fname = output_dir +'/'+'README.txt'
-            full_info = summary + "\n" + xys_info + "\n"
-            print(full_info)
-
-            with open(info_fname, "w") as file_object:
-                file_object.write(full_info)
-
-            if True:
-                np.save(output_dir + '/'+'X.npy',X)
-                np.save(output_dir + '/'+'y.npy',y)
-                np.save(output_dir + '/'+'sub.npy',sub)
-        else:
-            print("Error "+output_dir+" contains X.npy, please delete files")
-    else:
-        print(output_dir + " not found, please create directory")
-
-if interactive:
-    import matplotlib.pyplot as plt # for plotting
-
-# Plot y - must convert to numeric first
-def plot_activities():
-    uniques, y_num = np.unique(y, return_inverse=True)
-    print (uniques)
-    plt.plot(y_num) 
-    plt.show()
-if (interactive):
-    plot_activities()
-
-def plot_subjects():
-    uniques, s_num = np.unique(sub, return_inverse=True)
-    print (uniques)
-    plt.plot(s_num) 
-    plt.show()
-if (interactive):
-    plot_subjects()
