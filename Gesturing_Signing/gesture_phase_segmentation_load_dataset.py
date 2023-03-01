@@ -121,6 +121,7 @@ def get_gps_ir1_dict():
     Returns: a dict containing IR1 dataframes."""
     fn_list = ['a1_raw.csv', 'a2_raw.csv', 'a3_raw.csv',
            'b1_raw.csv', 'b3_raw.csv', 'c1_raw.csv','c3_raw.csv']
+    get_gesture_phase_dataset()
     ir1_df_dict = dict() # an empty dictionary
     for item in fn_list:
         subject = item[0] # the first letter of the filename a,b,c
@@ -153,22 +154,13 @@ def get_gps_ir1_dict():
         ir1_df_dict[item.split('.')[0]]=df # key is root name of csv
     return ir1_df_dict
 if interactive:
-    df_dict = get_gps_ir1_dict()
-    print(df_dict.keys())
+    ir1_dict = get_gps_ir1_dict()
+    print(ir1_dict.keys())
 
-"""# Option to save/pickle the IR1 dataframes."""
-
-if interactive: 
-    save_dir = 'gesture_phase_raw_ir1'
-    if (not os.path.isdir(save_dir)):
-        os.mkdir(save_dir)
-
-    for df_name, ir1_df in df_dict.items() :
-        ffname = os.path.join(save_dir,df_name) + '.pkl'
-        ir1_df.to_pickle(ffname)
+"""# Exploratory code for dealing with the data gaps in the dataset"""
 
 if interactive: 
-    my_df = df_dict['a1_raw']
+    my_df = ir1_dict['a1_raw']
     print(type(my_df))
     print(my_df.dtypes)
     display(my_df.head())
@@ -176,7 +168,7 @@ if interactive:
 
 if interactive:
     # labels will plot if they have been converted to ints 
-    my_df = xform.assign_ints_ir1_labels(df_dict['a1_raw'], label_mapping_dict = label_map_gps)
+    my_df = xform.assign_ints_ir1_labels(ir1_dict['a1_raw'], label_mapping_dict = label_map_gps)
     my_df.plot(subplots=True, figsize=(20, 10)) # yay Pandas
 
 # find timegaps and split so that the resulting IR1 dataframes
@@ -187,7 +179,7 @@ if interactive:
 # NOTE:  This is dataset specific in that it only handles one big gap
 # Interesting that the plots merge and don't show separately
 if interactive:
-    my_df = df_dict['a1_raw']
+    my_df = ir1_dict['a1_raw']
     max_gaps_to_fill = 30
     # good resample explanation https://datastud.dev/posts/time-series-resample
     rs_df = my_df.resample('33ms').mean().interpolate(limit = max_gaps_to_fill)
@@ -207,62 +199,7 @@ if interactive:
         display(df1['lhx'].plot(figsize=(20, 10)))
         display(df2['lhx'].plot(figsize=(20, 10)))
 
-"""# Use Common Transforms to generate IR3 and final arrays"""
-
-def get_ir3_from_dict(ir1_dict):
-    """Processes a dictionary with key = IR1 source filename, item = IR1 df
-    NOTE:  This version currently specific to Gesture dataset
-    """
-    ir3_X = np.zeros(shape=(1,xform.time_steps,19), dtype = 'float32')
-    ir3_y = np.zeros(shape=(1,1),dtype='int8') # newer int method
-    #ir3_y = np.full(shape=(1,1), fill_value='n/a',dtype='<U10') # unicode 10 char
-    ir3_sub = np.zeros(shape=(1,1),dtype='int16') # one subject number per entry
-    ir3_ss_times = np.zeros(shape=(1,2),dtype='datetime64') # start/stop times of sliding window
-    for ir1_fname, ir1_df in ir1_dict.items():
-        if verbose:
-            print('Processing ', ir1_fname)
-        ir1_df = xform.assign_ints_ir1_labels(ir1_df, label_mapping_dict = label_map_gps)
-        ir2_X, ir2_y, ir2_sub, ir2_ss_time, channel_list = xform.get_ir2_from_ir1(ir1_df)
-        ir2_X, ir2_y, ir2_sub, ir2_ss_time = xform.clean_ir2(ir2_X, ir2_y, ir2_sub, ir2_ss_time)
-        ir2_X, ir2_y, ir2_sub, ir2_ss_time = xform.drop_label_ir2_ir3(ir2_X, ir2_y, ir2_sub, ir2_ss_time, 99)
-        ir3_X = np.vstack([ir3_X, ir2_X])
-        ir3_y = np.vstack([ir3_y, ir2_y])
-        ir3_sub = np.vstack([ir3_sub, ir2_sub])
-        ir3_ss_times = np.vstack([ir3_ss_times, ir2_ss_time])
-    #delete first row placeholders
-    X = np.delete(ir3_X, (0), axis=0) 
-    y = np.delete(ir3_y, (0), axis=0) 
-    sub = np.delete(ir3_sub, (0), axis=0)
-    sub = np.delete(ir3_sub, (0), axis=0)
-    ss_times = np.delete(ir3_ss_times, (0), axis=0)
-
-    xys_info = 'Needs work!\n'
-    # xys_info += '\n'.join([str(elem) for elem in zip_flist]) # conv list to string
-    # xys_info += '\nTime steps =' + str(time_steps) + ', Step =' + str(stride) + ', no resample\n'
-    # xys_info += 'Final Shapes\n'
-    # xys_info += "X shape " + str(X.shape) + " dtype = " + str(X.dtype) + "\n"
-    # xys_info += "y shape " + str(y.shape) + " dtype = " + str(y.dtype) + "\n"
-    # xys_info += "sub shape " + str(sub.shape) + " dtype = " + str(sub.dtype) + "\n"
-    xys_info += "IR1 Channel names:" + str(channel_list) + "\n"
-    # # Get final counts for label ndarray - not quite as easy as pandas df
-    # xys_info += "Final Label Counts\n"
-    # unique, counts = np.unique(y, return_counts=True)
-    # xys_info += str(np.asarray((unique, counts)).T)
-    # xys_info += "\nSamples per Subject\n"
-    # unique, counts = np.unique(sub, return_counts=True)
-    # xys_info += str(np.asarray((unique, counts)).T)
-    return X, y, sub, ss_times, xys_info
-if interactive:
-    X, y, sub, ss_times, xys_info = get_ir3_from_dict(df_dict)
-    headers = ("array","shape", "object type", "data type")
-    mydata = [("X:", X.shape, type(X), X.dtype),
-            ("y:", y.shape ,type(y), y.dtype),
-            ("sub:", sub.shape, type(sub), sub.dtype),
-            ("ss_time:", ss_times.shape, type(ss_times), ss_times.dtype)]
-    print(tabulate(mydata, headers=headers))
-    unique, counts = np.unique(y, return_counts=True)
-    print('Label Counts:\n',str(np.asarray((unique, counts)).T))
-    print(label_map_gps)
+"""# The dataset specific code to generate the dictionary of IR1 dataframes is complete.  Now use Shared Transforms to generate the final output arrays."""
 
 def gesture_phase_segmentation_load_dataset(
     #verbose = False,
@@ -287,9 +224,11 @@ def gesture_phase_segmentation_load_dataset(
     today = date.today()
     log_info += today.strftime("%B %d, %Y") + "\n"
     log_info += "sub dict = " + str(split_subj) + "\n"
-    get_gesture_phase_dataset()
-    df_dict = get_gps_ir1_dict()
-    X, y, sub, ss_times, xys_info = get_ir3_from_dict(df_dict)
+    #get_gesture_phase_dataset()
+    #df_dict = get_gps_ir1_dict()
+    #X, y, sub, ss_times, xys_info = get_ir3_from_dict(df_dict)
+    ir1_dict = get_gps_ir1_dict()
+    X, y, sub, ss_times, xys_info = xform.get_ir3_from_dict(ir1_dict, label_map = label_map_gps, num_channels = 19)
     #if (not use_saved_xysub):
     #   X, y, sub, xys_info = get_ir3()
     # Drop unwanted channels from X
@@ -399,57 +338,3 @@ if __name__ == "__main__":
     print("\n----------- Contents of returned log_info ---------------")
     print(log_info)
     print("\n------------- End of returned log_info -----------------")
-
-"""#Save arrays to drive
-This is common code and untested - TWristAR is small so download and processing is fast.
-
-For some of the larger datsets it is a big time benefit to store the arrays either before or after train/test split.  
-"""
-
-if False: #change to true to save files interactively
-    output_dir = '/content/drive/MyDrive/Processed_Datasets/TWristAR/all-sensors'
-    if (os.path.isdir(output_dir)):
-        #quick check for existing files, '.ipynb_checkpoints' file 
-        #makes it more complicated to see if directory is empty
-        if (not os.path.isfile(output_dir + '/X.npy')):
-            summary = "TWristAR data\n"
-            summary += "Saved to " + output_dir + "\n"
-            summary += "Generated by TWristAR_load_data.ipynb"
-            summary += " on " + time.strftime('%b-%d-%Y_%H%M', time.localtime())
-            summary += "this version for fusion of learned representation work\n"
-            summary += "contains data from all 4 e4 sensors"
-            info_fname = output_dir +'/'+'README.txt'
-            full_info = summary + "\n" + xys_info + "\n"
-            print(full_info)
-
-            with open(info_fname, "w") as file_object:
-                file_object.write(full_info)
-
-            if True:
-                np.save(output_dir + '/'+'X.npy',X)
-                np.save(output_dir + '/'+'y.npy',y)
-                np.save(output_dir + '/'+'sub.npy',sub)
-        else:
-            print("Error "+output_dir+" contains X.npy, please delete files")
-    else:
-        print(output_dir + " not found, please create directory")
-
-if interactive:
-    import matplotlib.pyplot as plt # for plotting
-
-# Plot y - must convert to numeric first
-def plot_activities():
-    uniques, y_num = np.unique(y, return_inverse=True)
-    print (uniques)
-    plt.plot(y_num) 
-    plt.show()
-if (interactive):
-    plot_activities()
-
-def plot_subjects():
-    uniques, s_num = np.unique(sub, return_inverse=True)
-    print (uniques)
-    plt.plot(s_num) 
-    plt.show()
-if (interactive):
-    plot_subjects()
