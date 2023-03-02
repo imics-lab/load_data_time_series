@@ -33,7 +33,7 @@ Acknowledgement to and a good example of the WISDM format being pre-processed is
 
 [Lee B. Hinkle](https://userweb.cs.txstate.edu/~lbh31/), Texas State University, [IMICS Lab](https://imics.wp.txstate.edu/)  
 TODO:
-* IR2/3 label dtypes are strings - not sure if strings are the best answer or should use number along with "decoder" dictionary.
+* The IR3 transform could be further optimized by taking a dictionary of IR1 dataframes as was done in the later datasets.
 * log_info needs to be updated to dictionary format so we can read things like the channel names automatically.
 * Time is off by 6 hrs due to time zone issues - adjusted in Excel/csv but would be good to show it in the correct time zone.
 * Need to incorporate session numbers or just use the alternate .csv files where validation was 'fake' subs 11 and 22 which were just a few of the sessions from subjects 1 and 2.  This was done in the Semi-Supervised version of the loader for WISHWell but not integrated back into this version.
@@ -71,6 +71,7 @@ def get_py_file(fname, url):
 get_py_file(fname = 'load_data_utils.py', url = 'https://raw.githubusercontent.com/imics-lab/load_data_time_series/main/load_data_utils.py')
 get_py_file(fname = 'load_data_transforms.py', url = 'https://raw.githubusercontent.com/imics-lab/load_data_time_series/main/load_data_transforms.py')
 
+# common transforms and utils used by the individual loaders
 import load_data_transforms as xform
 import load_data_utils as utils
 
@@ -316,11 +317,14 @@ if interactive:
     print ("Label Counts - # samples before sliding window")
     print (ir1_df['label'].value_counts())
 
-"""# Use Shared Transforms for IR1 to Final Array Output"""
-
-def get_ir3(
-    working_dir = os.path.join(my_dir,'TWristAR_temp'), # dir will be created
-    zip_flist = ['sub1/1574621345_A01F11.zip',
+def get_twristar_ir1_dict():
+    """reads the TWRistAR dataset and converts each "session file" to an IR1
+    dataframe.
+    Returns: a dict containing key = df_name and item = IR1 dataframes."""
+    # A few notes - TWRristAR (or more specifically e4 wristband datafiles)
+    # require a lot of processing, if trying to leverage for more traditional
+    # .csv file format see Gesture Phase version.
+    fn_list = ['sub1/1574621345_A01F11.zip',
                 'sub1/1574622389_A01F11.zip',
                 'sub1/1574624998_A01F11.zip',
                 'sub2/1633107019_A01F11.zip',
@@ -328,115 +332,47 @@ def get_ir3(
                 'sub2/1633109744_A01F11.zip',
                 'sub3/1633704587_A01F11.zip',
                 'sub3/1633705664_A01F11.zip',
-                'sub3/1633711821_A01F11.zip'],
-    ):
-    """NOTE:  This methodology works for TWristAR because it requires little
-    cleaning/rebalancing.  For other datasets a train/test aware version must
-    be used since the processing of train and test IR2s may differ.
-    This is the main function to create the three ndarrays X, y, sub from
-    the dataset zip file.  It is an updated version of get_xys.  
-    1) Downloads TWristAR from Zenodo repository,
-    2) Processes each e4 zip file and associated label csv file into X (data),
-     y (labels), and sub (subject number) IR2 ndarrays.
-    3) Stackes the IR2 arrays into IR3 (X, y, sub) arrays
-    Note:  TWristAR is purposely small, but for other datasets this can take
-    a long time and it may be best to save these numpy arrays locally.
-    """
+                'sub3/1633711821_A01F11.zip']
     get_TWristAR()
-    # create blank ndarrays to append to
-    ir3_X = np.zeros(shape=(1,xform.time_steps,7), dtype = 'float32')
-    ir3_y = np.zeros(shape=(1,1),dtype='int8') # newer int method
-    # ir3_y = np.full(shape=(1,1), fill_value='n/a',dtype='<U10') # unicode 10 char
-    ir3_sub = np.zeros(shape=(1,1),dtype=int) # one subject number per entry
-    for i in zip_flist:
-        zip_ffname = os.path.join(my_dir,'TWristAR',i)
+    ir1_df_dict = dict() # an empty dictionary
+    for item in fn_list:
+        zip_ffname = os.path.join(my_dir,'TWristAR',item)
         if verbose:
             print('Processing ', zip_ffname)
         if not os.path.exists(working_dir):
             os.makedirs(working_dir)
         unzip_e4_file(zip_ffname)
-        ir1_df = get_ir1_from_e4_dir()
+        df = get_ir1_from_e4_dir()
         if verbose:
             print('Tag info (button presses) from tags.csv')
             tag_ffname = working_dir + '/tags.csv'
             show_e4_tag_time(tag_ffname)
         # Generate associated csv filename, forces the long numbered filenames to match
         labels_ffname = os.path.splitext(zip_ffname)[0] + '_labels.csv'
-        ir1_df = label_df_from_csv (ir1_df, labels_ffname)
-        ir1_df['label'].value_counts()
+        df = label_df_from_csv (df, labels_ffname)
+        df['label'].value_counts()
         if verbose:
             print ("Label Counts - # samples before sliding window\n",ir1_df['label'].value_counts())
-        ir1_df = xform.assign_ints_ir1_labels(ir1_df, label_mapping_dict = label_map_twristar)
-        ir2_X, ir2_y, ir2_sub, ir2_ss_time, channel_list = xform.get_ir2_from_ir1(ir1_df)
-        ir2_X, ir2_y, ir2_sub, ir2_ss_time = xform.clean_ir2(ir2_X, ir2_y, ir2_sub, ir2_ss_time)
-        ir2_X, ir2_y, ir2_sub, ir2_ss_time = xform.drop_label_ir2_ir3(ir2_X, ir2_y, ir2_sub, ir2_ss_time, 99)
-        # ir2_X, ir2_y, ir2_sub, channel_list = get_ir2_from_ir1(ir1_df)
-        # ir2_X, ir2_y, ir2_sub = clean_ir2(ir2_X, ir2_y, ir2_sub)
-        # ir2_X, ir2_y, ir2_sub = drop_label_ir2_ir3(ir2_X, ir2_y, ir2_sub, 'Undefined')
-        ir3_X = np.vstack([ir3_X, ir2_X])
-        ir3_y = np.vstack([ir3_y, ir2_y])
-        ir3_sub = np.vstack([ir3_sub, ir2_sub])
-        shutil.rmtree(working_dir)
+        # tighten up the column types for space savings.
+        # change to 32-bit, credit/ref https://stackoverflow.com/questions/69188132/how-to-convert-all-float64-columns-to-float32-in-pandas
+        # Select columns with 'float64' dtype  
+        float64_cols = list(df.select_dtypes(include='float64'))
+        # The same code again calling the columns
+        df[float64_cols] = df[float64_cols].astype('float32')
+        # Seems better to explicitly type the other columns vs object.
+        df['label']=df['label'].astype('category')
+        df['sub']=df['sub'].astype('category') # this is before convert to int
 
-    #delete first row placeholders
-    X = np.delete(ir3_X, (0), axis=0) 
-    y = np.delete(ir3_y, (0), axis=0) 
-    sub = np.delete(ir3_sub, (0), axis=0)
-    sub = sub.astype(np.uint8) # convert from float to int
-
-    xys_info = 'TWristAR e4 wristband structured 6-activity zip files\n'
-    xys_info += '\n'.join([str(elem) for elem in zip_flist]) # conv list to string
-    xys_info += '\nTime steps =' + str(xform.time_steps) + ', Step =' + str(xform.stride) + ', no resample\n'
-    xys_info += 'Final Shapes\n'
-    xys_info += "X shape " + str(X.shape) + " dtype = " + str(X.dtype) + "\n"
-    xys_info += "y shape " + str(y.shape) + " dtype = " + str(y.dtype) + "\n"
-    xys_info += "sub shape " + str(sub.shape) + " dtype = " + str(sub.dtype) + "\n"
-    xys_info += "Channel names:" + str(channel_list) + "\n"
-    # Get final counts for label ndarray - not quite as easy as pandas df
-    xys_info += "Final Label Counts\n"
-    unique, counts = np.unique(y, return_counts=True)
-    xys_info += str(np.asarray((unique, counts)).T)
-    xys_info += "\nSamples per Subject\n"
-    unique, counts = np.unique(sub, return_counts=True)
-    xys_info += str(np.asarray((unique, counts)).T)
-    return X, y, sub, xys_info
+        root_fname = (item.split('/')[1].split('.')[0]) # between / and .
+        ir1_df_dict[root_fname]=df # key is root name in the file
+    return ir1_df_dict
 if interactive:
-    X, y, sub, xys_info = get_ir3()
-    headers = ("array","shape", "object type", "data type")
-    mydata = [("X:", X.shape, type(X), X.dtype),
-            ("y:", y.shape ,type(y), y.dtype),
-            ("sub:", sub.shape, type(sub), sub.dtype)]
-    print(tabulate(mydata, headers=headers))
+    ir1_dict = get_twristar_ir1_dict()
+    print(ir1_dict.keys())
 
-def limit_channel_ir3(ir3_X, 
-                      all_channel_list = ['accel_x', 'accel_y', 'accel_z', 'accel_ttl', 'bvp', 'eda', 'p_temp'],
-                      keep_channel_list = ["accel_ttl"]):
-    """Pass the full ir3_X array with all channels, the stored all_channel_list
-    that was extracted from the ir1 dataframe column names, and a 
-    keep_channel_list.  Matching channels will be kept, all others dropped.
-    This would have been much easier at IR1 but that would precluded channel 
-    experiments and by channel feature representations.
-    This is really new code, I'm leaving in some commented statements for now"""
-    ch_idx = []
-    # should add check here for channels not in list
-    for i in keep_channel_list:
-        ch_idx.append(all_channel_list.index(i)) 
-    if verbose:
-        print("Keeping X columns at index", ch_idx)
-    new_X = ir3_X[:,:,ch_idx]
-    return new_X
-if interactive:
-    print("all_channel_list", all_channel_list)
-    print("starting X shape", my_X.shape)
-    print("first row", my_X[0,0,:])
-    my_new_X = limit_channel_ir3(my_X,
-                                 keep_channel_list = ['accel_ttl','p_temp'])
-    print("ending X shape", my_new_X.shape)
-    print("first row", my_new_X[0,0,:])
+"""# The dataset specific code to generate the dictionary of IR1 dataframes is complete.  Now use Shared Transforms to generate the final output arrays."""
 
 def twristar_load_dataset(
-    verbose = False,
-    use_saved_xysub = False, # get X,y,sub from zip, True = faster to used saved ones
     incl_val_group = False, # split train into train and validate
     split_subj = dict
                 (train_subj = [1,2],
@@ -454,32 +390,17 @@ def twristar_load_dataset(
     today = date.today()
     log_info += today.strftime("%B %d, %Y") + "\n"
     log_info += "sub dict = " + str(split_subj) + "\n"
-    if (not use_saved_xysub):
-        X, y, sub, xys_info = get_ir3()
-    else:
-        # read previously stored X, y, sub arrays instead of creating from zip
-        # saves time when running multiple train/test split experiments
-        # e.g. passing different subject dictionaries to this method
-        # create & save X, y, sub using Leotta_2021_get_X_y_sub.ipynb interactively
-        # this is not a big deal for TWristAR which is purposely small.
-        input_dir = '/content/drive/MyDrive/Processed_Datasets/shl/ir3_20hz'
-        X = np.load(input_dir + '/'+'X.npy')
-        y = np.load(input_dir + '/'+'y.npy')
-        sub = np.load(input_dir + '/'+'sub.npy')
-        log_info += "X, y, sub loaded from "+str(input_dir)+"\n"
+    ir1_dict = get_twristar_ir1_dict()
+    X, y, sub, ss_times, xys_info = xform.get_ir3_from_dict(ir1_dict, label_map = label_map_twristar, num_channels = 7) 
     # Drop unwanted channels from X
+    # TODO:  Channel list should be automatically pulled from info dict.
+    all_channel_list = ['accel_x', 'accel_y', 'accel_z','accel_ttl','bvp','eda','p_temp']
     log_info += "Keeping channels" + str(keep_channel_list) + "\n"
-    X = limit_channel_ir3(X, keep_channel_list = keep_channel_list)
+    X = xform.limit_channel_ir3(X, all_channel_list = all_channel_list, keep_channel_list = keep_channel_list)
     # write initial array info to log_info
-    headers = ("Initial Array","shape", "object type", "data type")
-    mydata = [("X", X.shape, type(X), X.dtype),
-              ("y", y.shape, type(y), y.dtype),
-              ("sub", sub.shape, type(sub), sub.dtype)]
-    if (verbose):
-        print(tabulate(mydata, headers=headers))
-    log_info += tabulate(mydata, headers=headers) + "\n"
+    log_info += "Initial Arrays\n"
+    log_info += utils.tabulate_numpy_arrays({'X':X,'y':y,'sub':sub,'ss_times':ss_times})+'\n'
     
- 
     #One-Hot-Encode y...there must be a better way when starting with strings
     #https://machinelearningmastery.com/how-to-one-hot-encode-sequence-data-in-python/
     # Need to look at https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html
@@ -549,20 +470,13 @@ def twristar_load_dataset(
 
 """# Main is setup to be a demo and bit of unit test."""
 
-#print(utils.tabulate_numpy_arrays({'ir2_X': ir2_X, 'ir2_y':ir2_y, 'ir2_sub':ir2_sub,
-#                            'ir2_ss_time':ir2_ss_time}))
-
 if __name__ == "__main__":
     verbose = False
     print("Get TWristAR using defaults - simple and easy!")
     x_train, y_train, x_test, y_test \
                              = twristar_load_dataset()
-    headers = ("Array","shape", "data type")
-    mydata = [("x_train:", x_train.shape, x_train.dtype),
-            ("y_train:", y_train.shape, y_train.dtype),
-            ("x_test:", x_test.shape, x_test.dtype),
-            ("y_test:", y_test.shape, y_test.dtype)]
-    print("\n",tabulate(mydata, headers=headers))
+    print(utils.tabulate_numpy_arrays({'x_train': x_train, 'y_train': y_train,
+                                   'x_test': x_test, 'y_test': y_test}))
     print ('\n','-'*72)
 
     print("Get TWristAR with validation group, info file, and four channels\n")
@@ -572,15 +486,10 @@ if __name__ == "__main__":
                                  keep_channel_list = ['accel_ttl','bvp',
                                                       'eda', 'p_temp'],
                                  return_info_dict = True)
+    print(utils.tabulate_numpy_arrays({'x_train': x_train, 'y_train': y_train,
+                                       'x_valid': x_valid, 'y_valid': y_valid,
+                                   'x_test': x_test, 'y_test': y_test}))
 
-    headers = ("Array","shape", "data type")
-    mydata = [("x_train:", x_train.shape, x_train.dtype),
-            ("y_train:", y_train.shape, y_train.dtype),
-            ("x_valid:", x_valid.shape, x_valid.dtype),
-            ("y_valid:", y_valid.shape, y_valid.dtype),
-            ("x_test:", x_test.shape, x_test.dtype),
-            ("y_test:", y_test.shape, y_test.dtype)]
-    print("\n",tabulate(mydata, headers=headers))
     print("\n----------- Contents of returned log_info ---------------")
     print(log_info)
     print("\n------------- End of returned log_info -----------------")
@@ -592,14 +501,10 @@ if __name__ == "__main__":
                                  return_info_dict = False,
                                  suppress_warn = True)
     print("This is a no output config - silent execution")
-    headers = ("Array","shape", "data type")
-    mydata = [("x_train:", x_train.shape, x_train.dtype),
-            ("y_train:", y_train.shape, y_train.dtype),
-            ("x_valid:", x_valid.shape, x_valid.dtype),
-            ("y_valid:", y_valid.shape, y_valid.dtype),
-            ("x_test:", x_test.shape, x_test.dtype),
-            ("y_test:", y_test.shape, y_test.dtype)]
-    print("\n",tabulate(mydata, headers=headers))
+    print(utils.tabulate_numpy_arrays({'x_train': x_train, 'y_train': y_train,
+                                       'x_valid': x_valid, 'y_valid': y_valid,
+                                   'x_test': x_test, 'y_test': y_test}))
+    print ('\n','-'*72)
     print("Get TWristAR with validation group, and accel only\n")
     x_train, y_train, x_valid, y_valid, x_test, y_test, log_accelxyz\
                              = twristar_load_dataset(
@@ -607,14 +512,9 @@ if __name__ == "__main__":
                                  keep_channel_list = ['accel_x', 'accel_y', 'accel_z', 'accel_ttl'],
                                  return_info_dict = True,
                                  suppress_warn = True)
-    headers = ("Array","shape", "data type")
-    mydata = [("x_train:", x_train.shape, x_train.dtype),
-            ("y_train:", y_train.shape, y_train.dtype),
-            ("x_valid:", x_valid.shape, x_valid.dtype),
-            ("y_valid:", y_valid.shape, y_valid.dtype),
-            ("x_test:", x_test.shape, x_test.dtype),
-            ("y_test:", y_test.shape, y_test.dtype)]
-    print("\n",tabulate(mydata, headers=headers))
+    print(utils.tabulate_numpy_arrays({'x_train': x_train, 'y_train': y_train,
+                                       'x_valid': x_valid, 'y_valid': y_valid,
+                                   'x_test': x_test, 'y_test': y_test}))
     print("\n----------- Contents of returned log_info ---------------")
     print(log_accelxyz)
     print("\n------------- End of returned log_info -----------------")
