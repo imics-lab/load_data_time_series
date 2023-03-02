@@ -317,22 +317,29 @@ if interactive:
     print ("Label Counts - # samples before sliding window")
     print (ir1_df['label'].value_counts())
 
-def get_twristar_ir1_dict():
+def get_twristar_ir1_dict(scripted=True):
     """reads the TWRistAR dataset and converts each "session file" to an IR1
     dataframe.
+    Args:
+    scripted (boolean) - True (default) returns scripted activity dataframes,
+     False returns unscripted activity dataframes.
     Returns: a dict containing key = df_name and item = IR1 dataframes."""
     # A few notes - TWRristAR (or more specifically e4 wristband datafiles)
     # require a lot of processing, if trying to leverage for more traditional
     # .csv file format see Gesture Phase version.
-    fn_list = ['sub1/1574621345_A01F11.zip',
-                'sub1/1574622389_A01F11.zip',
-                'sub1/1574624998_A01F11.zip',
-                'sub2/1633107019_A01F11.zip',
-                'sub2/1633108344_A01F11.zip',
-                'sub2/1633109744_A01F11.zip',
-                'sub3/1633704587_A01F11.zip',
-                'sub3/1633705664_A01F11.zip',
-                'sub3/1633711821_A01F11.zip']
+    if scripted:
+        fn_list = ['sub1/1574621345_A01F11.zip',
+                    'sub1/1574622389_A01F11.zip',
+                    'sub1/1574624998_A01F11.zip',
+                    'sub2/1633107019_A01F11.zip',
+                    'sub2/1633108344_A01F11.zip',
+                    'sub2/1633109744_A01F11.zip',
+                    'sub3/1633704587_A01F11.zip',
+                    'sub3/1633705664_A01F11.zip',
+                    'sub3/1633711821_A01F11.zip']
+    else:
+        fn_list = ['sub1/1574625540_A01F11.zip',
+                    'sub2/1633111849_A01F11.zip']
     get_TWristAR()
     ir1_df_dict = dict() # an empty dictionary
     for item in fn_list:
@@ -352,7 +359,7 @@ def get_twristar_ir1_dict():
         df = label_df_from_csv (df, labels_ffname)
         df['label'].value_counts()
         if verbose:
-            print ("Label Counts - # samples before sliding window\n",ir1_df['label'].value_counts())
+            print ("Label Counts - # samples before sliding window\n",df['label'].value_counts())
         # tighten up the column types for space savings.
         # change to 32-bit, credit/ref https://stackoverflow.com/questions/69188132/how-to-convert-all-float64-columns-to-float32-in-pandas
         # Select columns with 'float64' dtype  
@@ -367,6 +374,8 @@ def get_twristar_ir1_dict():
         ir1_df_dict[root_fname]=df # key is root name in the file
     return ir1_df_dict
 if interactive:
+    ir1_dict = get_twristar_ir1_dict(scripted = False)
+    print(ir1_dict.keys())
     ir1_dict = get_twristar_ir1_dict()
     print(ir1_dict.keys())
 
