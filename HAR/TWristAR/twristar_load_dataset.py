@@ -75,7 +75,7 @@ get_py_file(fname = 'load_data_transforms.py', url = 'https://raw.githubusercont
 import load_data_transforms as xform
 import load_data_utils as utils
 
-"""# Global Parameters"""
+"""# Global and Dataset Parameters"""
 
 # environment and execution parameters
 my_dir = '.' # replace with absolute path if desired
@@ -88,6 +88,7 @@ interactive = True # for exploring data and functions interactively
 verbose = True
 
 # dataset parameters
+all_channel_list = ['accel_x', 'accel_y', 'accel_z','accel_ttl','bvp','eda','p_temp']
 # frequency = 32 - note this is hardcoded due to the unique sample freqencies
 # that differ between the individual e4 sensors
 xform.time_steps = 96 # three seconds at 32Hz
@@ -96,9 +97,14 @@ xform.stride = 32 # one second step for each sliding window
 # possible labels in the entire dataset.   This allows for predictable conversion
 # regardless of the slices.  I'm using 99 for 'unknown' which will be dropped
 # to avoid the confusion of shifing by 1 place, zero indexed etc.
+# Also this label map dict is setup to handle multi-labels but TWRristAR 
+# has only a single activity label.
 label_map_twristar = {"label":     {"Downstairs": 0, "Jogging": 1, "Sitting": 2,
                                 "Standing": 3, "Upstairs": 4, "Walking": 5,
                                 "Undefined": 99}}
+scripted = True # TWristAR has two categories of data - scripted activities
+                # and unscripted, set to false to get the unscripted data.
+                # See example in bottom of this notebook.
 
 interactive = False # don't run if interactive, automatically runs for .py version
 verbose = False # to limit the called functions output
@@ -317,15 +323,19 @@ if interactive:
     print ("Label Counts - # samples before sliding window")
     print (ir1_df['label'].value_counts())
 
-def get_twristar_ir1_dict(scripted=True):
+def get_twristar_ir1_dict():
     """reads the TWRistAR dataset and converts each "session file" to an IR1
-    dataframe.
+    dataframe.  The goal here is to capture and convert all raw data into
+    a 2D dataframe of rows = datetime index of each sample, columns = {channels,
+    label(s), subject_num}.  Additional methods may be used to drop channels,
+    and convert the string labels to mapped ints prior to switch to ndarrays.
     Args:
-    scripted (boolean) - True (default) returns scripted activity dataframes,
+    none but uses global scripted (boolean):
+     True (default) returns scripted activity dataframes,
      False returns unscripted activity dataframes.
     Returns: a dict containing key = df_name and item = IR1 dataframes."""
     # A few notes - TWRristAR (or more specifically e4 wristband datafiles)
-    # require a lot of processing, if trying to leverage for more traditional
+    # require a lot of processing, if trying to leverage from a more traditional
     # .csv file format see Gesture Phase version.
     if scripted:
         fn_list = ['sub1/1574621345_A01F11.zip',
@@ -374,7 +384,8 @@ def get_twristar_ir1_dict(scripted=True):
         ir1_df_dict[root_fname]=df # key is root name in the file
     return ir1_df_dict
 if interactive:
-    ir1_dict = get_twristar_ir1_dict(scripted = False)
+    # scripted = False
+    ir1_dict = get_twristar_ir1_dict()
     print(ir1_dict.keys())
     ir1_dict = get_twristar_ir1_dict()
     print(ir1_dict.keys())
@@ -399,11 +410,17 @@ def twristar_load_dataset(
     today = date.today()
     log_info += today.strftime("%B %d, %Y") + "\n"
     log_info += "sub dict = " + str(split_subj) + "\n"
+    if scripted:  # this is a global variable in dataset params at top
+        label_xform = 'drop' # for scripted activities used to train drop mixed
+    else:
+        label_xform = 'mode' # for unscripted assign mode label to every window 
     ir1_dict = get_twristar_ir1_dict()
-    X, y, sub, ss_times, xys_info = xform.get_ir3_from_dict(ir1_dict, label_map = label_map_twristar, num_channels = 7) 
+    X, y, sub, ss_times, xys_info = xform.get_ir3_from_dict(ir1_dict, 
+                                                            label_map = label_map_twristar,
+                                                            label_method = label_xform) 
     # Drop unwanted channels from X
     # TODO:  Channel list should be automatically pulled from info dict.
-    all_channel_list = ['accel_x', 'accel_y', 'accel_z','accel_ttl','bvp','eda','p_temp']
+    # all_channel_list = ['accel_x', 'accel_y', 'accel_z','accel_ttl','bvp','eda','p_temp']
     log_info += "Keeping channels" + str(keep_channel_list) + "\n"
     X = xform.limit_channel_ir3(X, all_channel_list = all_channel_list, keep_channel_list = keep_channel_list)
     # write initial array info to log_info
@@ -527,3 +544,21 @@ if __name__ == "__main__":
     print("\n----------- Contents of returned log_info ---------------")
     print(log_accelxyz)
     print("\n------------- End of returned log_info -----------------")
+    # Test the ability to get and process the unscripted free-form walks
+    # These are generally treated as unlabeled sequences for our labeling work
+    # It is setup so sub 1 walk is the train array, sub2 is the test array.
+    # And they are in fact labeled for final validation.
+    scripted = False # this is a global variable assigned at begining
+    print ('\n','-'*72)
+    print("Get TWristAR Free-Form Walks - Test = Sub1, Train = Sub2\n")
+    x_train, y_train, x_test, y_test, log_accelxyz\
+                             = twristar_load_dataset(
+                                 split_subj = dict (train_subj = [1],
+                                                    validation_subj = [],
+                                                    test_subj = [2]),
+                                 keep_channel_list = ['accel_x', 'accel_y', 'accel_z', 'accel_ttl'],
+                                 return_info_dict = True,
+                                 suppress_warn = True)
+    print(utils.tabulate_numpy_arrays({'x_train': x_train, 'y_train': y_train,
+                                   'x_test': x_test, 'y_test': y_test}))
+    scripted = True   # put it back where you found it!
