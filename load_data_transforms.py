@@ -21,6 +21,7 @@ TODO:
 * Issue with !gdown not running in a function is a pain.
 * assign_ints_ir1_labels() seems to still return an int64 instead of int8
 * get_ir2_from_ir1(df) only handles a single 'label' column, needs update based on the keys in the label_map dict.  Sub column is also hardcoded in this function, should at least check for 'sub' and 'subject'
+* Same basic issue for get_ir2_y_string_labels(), it needs to be updated to handle multilabel cases.
 * Needs at least a basic _init_ unit test to be able to generate some output when checking as a .py
 """
 
@@ -40,6 +41,7 @@ from time import gmtime, strftime, localtime #for displaying Linux UTC timestamp
 from datetime import datetime, date
 import urllib.request # to get files from web w/o !wget
 import matplotlib.pyplot as plt
+from scipy import stats as st # for assigning labels as mode of sliding window
 
 """# Global Parameters"""
 
@@ -63,9 +65,11 @@ stride = 8
 # xform.stride = 32 # one second step for each sliding window
 
 interactive = False # don't run if interactive, automatically runs for .py version
-verbose = False # to limit the called functions output
+verbose = False # to limit the called functions output, overwrite per above
 
-"""# Get IR1 dataframes for interactive testing."""
+"""# Get IR1 dataframes for interactive testing.
+IMPORTANT: this code must be commented out when saving as .py!
+"""
 
 if interactive:
     print ("What?")
@@ -74,7 +78,27 @@ if interactive:
 # !gdown "11OWxTejlTlR53s3RZbSNZdyMdFiN4dZl&confirm=t" # Gesture Phase Raw IR1s in zip
 # shutil.unpack_archive('Gesture_Phase_Raw_IR1.zip', my_dir, 'zip')
 # ir1_df = pd.read_pickle("a1_raw.pkl")
+# ir1_df['label']=ir1_df['label'].astype('category') # stored test file has strings
+# display(ir1_df.info())
+
 # ir1_df.head(5)
+
+"""# This cell is a utility function from load_data_utils.py
+It shortens the interactive code but the entire utils library is not needed.
+"""
+
+def tabulate_numpy_arrays(dict_name_npy):
+    """Returns a string of tabulated data for numpy arrays passed as dictionary.
+    args: dictionary format of {"npy_array_name":npy_array,...}.
+    This one is pretty narrowly tested, mostly for trainX, testy etc."""
+    # it seems silly to pass the variable name as a string, but I haven't found
+    # a method that is portable/callable to get the variable name.
+    from tabulate import tabulate
+    headers = ("array","shape", "data type")
+    meta_data = []
+    for i in dict_name_npy :
+        meta_data.append ((i,str(dict_name_npy[i].shape),str(dict_name_npy[i].dtype)))
+    return(tabulate(meta_data, headers=headers))
 
 """# Shared transforms"""
 
@@ -99,12 +123,13 @@ def assign_ints_ir1_labels(df, label_mapping_dict):
     # Credit to this nice writeup https://pbpython.com/categorical-encoding.html
     if verbose:
         print("assign_ints_ir1_labels() converting categorical strings to ints")
-        print("df['label'] value counts")
+        print("df['label'] value counts before")
         print(df['label'].value_counts())
-        if df['label'].dtype.name == 'category':
-            dict( zip( df['label'].cat.codes, df['label'] ) ) # shows mapping Pandas is using.
     df = df.replace(label_mapping_dict)
     df['label']=df['label'].astype('int8') # TODO this only works with single label
+    if verbose:
+        print("df['label'] value counts after")
+        print(df['label'].value_counts())
     return df
 
 if interactive:
@@ -143,7 +168,6 @@ def get_ir2_from_ir1(df):
         print('Channels in X:',channel_list)
     X = df[channel_list].to_numpy(dtype = 'float32')
     y = df['label'].to_numpy(dtype = 'int8') # doesn't work for strings
-    #y = df['label'].to_numpy(dtype='<U10') # use assign_ints_ir1_labels first
     sub = df['sub'].to_numpy(dtype = 'int16') # for datasets with sub #s > 255
     if verbose:
         print('X,y,sub array shapes before sliding window', X.shape, y.shape, sub.shape)
@@ -168,16 +192,10 @@ def get_ir2_from_ir1(df):
     return X, y, sub, ss_times, channel_list
 if interactive:
     my_X, my_y, my_sub, my_ss_times, all_channel_list = get_ir2_from_ir1(ir1_df)
-    headers = ("array","shape", "object type", "data type")
-    mydata = [("my_X:", my_X.shape, type(my_X), my_X.dtype),
-            ("my_y:", my_y.shape ,type(my_y), my_y.dtype),
-            ("my_sub:", my_sub.shape, type(my_sub), my_sub.dtype),
-            ("my_ss_times:", my_ss_times.shape, type(my_ss_times), my_ss_times.dtype)]
-    print("IR2 array info")
-    print(tabulate(mydata, headers=headers))
+    print(tabulate_numpy_arrays({'my_X':my_X,'my_y':my_y,'my_sub':my_sub,'my_ss_times':my_ss_times}))
     print("Returned all_channel_list", all_channel_list)
 
-def clean_ir2(X, y, sub, ss_times):
+def drop_ir2_nan(X, y, sub, ss_times):
     """removes sliding windows containing NaN, multiple labels, or multiple
     subject numbers.  Collapses y, sub to column arrays.
     Returns cleaned versions of X, y, sub, ss_times ndarrays"""
@@ -203,41 +221,127 @@ def clean_ir2(X, y, sub, ss_times):
     if (nans.size!=0):
         print("WARNING! Cleaned output arrays still contain NaN entries")
         print("execute print(X[99]) # to view single sample")
-    # Now get rid of segments with multiple labels
+    return X, y, sub, ss_times
+if interactive:
+    my_X, my_y, my_sub, my_ss_times = drop_ir2_nan(my_X, my_y, my_sub, my_ss_times)  
+    print(tabulate_numpy_arrays({'my_X':my_X,'my_y':my_y,'my_sub':my_sub,'my_ss_times':my_ss_times}))
+
+def unify_ir2_labels(X, y, sub, ss_times, method = 'drop'):
+    """For each sliding window examine all labels and either drop the window
+     or assign all labels to the mode value.  Currently this works only for
+     single labels, not multi-label datasets.  y and sub arrays are collapsed.
+    Args:
+     X,y,sub,ss_times:  IR2 df prior to collapsing X,y,sub,ss_times
+     method: "drop" default - discard windows with mixed labels, typ train set
+             "mode" - set all labels to mode value of labels in window
+     returns X,y,sub,ss_times IR2 df, y & sub shapes now (instances, 1)"""
+    # TODO: a threshold setting to determine which method would be nice.
     # Not happy with this code, must be a better way but it seems to work...
-    idx = []
-    for i in range(y.shape[0]):
-        if np.all(y[i] == y[i][0]):
-            idx.append(True)
-            
-        else:
-            idx.append(False)
-            #print('Discarding Row:', i)
-    X = X[idx]
-    y = y[idx]
-    sub = sub[idx]
-    ss_times = ss_times[idx]
-    # TODO check for multiple subjects in window
-    y = y[:,0] # collapse columns
-    y = y[np.newaxis].T  # convert to single column array
+    if method == 'drop':
+        if verbose:
+            print('Dropped windows(rows) with mixed labels:', sep = '',end='')
+        idx = []
+        for i in range(y.shape[0]):
+            if np.all(y[i] == y[i][0]):
+                idx.append(True)        
+            else:
+                idx.append(False)
+                if verbose:
+                    print(i,',',end='')
+        X = X[idx]
+        y = y[idx]
+        sub = sub[idx]
+        ss_times = ss_times[idx]
+        if verbose:
+            print()
+        y = y[:,0] # collapse columns
+        y = y[np.newaxis].T  # convert to single column array
+    if method == 'mode':
+        # scipy stats seems to be the best for mode
+        # https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.mode.html
+        y, counts = st.mode(y, axis = 1, keepdims = True)
+        # TODO: the counts could be used for threshold to drop if not enough
+    # check subs, warn if delta and collapse
+    for i in range(sub.shape[0]):
+        if np.all(sub[i] != sub[i][0]):
+            print("WARNING:  Mixed subjects found in instance", i)
     sub = sub[:,0] # repeat for sub array
     sub = sub[np.newaxis].T
     return X, y, sub, ss_times
 if interactive:
+    my_X, my_y, my_sub, my_ss_times, all_channel_list = get_ir2_from_ir1(ir1_df)
+    print("Labels and counts before drop (counts are divided by time-steps)")
+    unique, counts = np.unique(my_y, return_counts=True)
+    print (np.asarray((unique, counts/time_steps)).T)
+    my_X, my_y, my_sub, my_ss_times = unify_ir2_labels(my_X, my_y, my_sub, my_ss_times, method = 'drop') 
+    print("Labels and counts after drop")
+    unique, counts = np.unique(my_y, return_counts=True)
+    print (np.asarray((unique, counts)).T)
+    print("Shapes after dropping windows with mixed labels")
+    print(tabulate_numpy_arrays({'my_X':my_X,'my_y':my_y,'my_sub':my_sub,'my_ss_times':my_ss_times}))  
+    # get new copy of the arrays since they have been altered.
+    my_X, my_y, my_sub, my_ss_times, all_channel_list = get_ir2_from_ir1(ir1_df)
+    my_X, my_y, my_sub, my_ss_times = unify_ir2_labels(my_X, my_y, my_sub, my_ss_times, method = 'mode')
+    print("Labels and counts after mode assignment")
+    unique, counts = np.unique(my_y, return_counts=True)
+    print (np.asarray((unique, counts)).T)
+    print("\nShapes with mode (should be unchanged in 1st dim = # instances)")
+    print(tabulate_numpy_arrays({'my_X':my_X,'my_y':my_y,'my_sub':my_sub,'my_ss_times':my_ss_times}))
+
+def get_ir2_y_string_labels(y,label_map):
+    """This method reverses the int encoding applied to IR1 when run on an
+    IR2/IR3 (sliding window numpy array).  The same label_map dict should be 
+    used.  Currently only supports a single label, shape y = (instance,1)
+    NOTE: This greatly increases the size of the array (for GPS dataset 44X)
+    args:
+        y - a IR2 or IR3 numpy array of int class labels
+        label_map - a dict containing the string to int encodings
+    returns:
+        y - a IR2 or IR3 numpy array of string class labels"""
+    # this code adapted from our Semi-Supervised-HAR.ipynb
+    str_to_key_dict = label_map_gps['label']
+    key_to_str_dict = dict([(value, key) for key, value in str_to_key_dict.items()])
+    if verbose:
+        "Converting integer encoded labels back to original strings"
+        print(str_to_key_dict)
+        print(key_to_str_dict)
+        print("Labels and counts before conversion")
+        unique, counts = np.unique(y, return_counts=True)
+        print (np.asarray((unique, counts)).T)
+
+    y_labels = np.vectorize(key_to_str_dict.get)(y)
+    #y_labels = np.vectorize(str_to_key_dict.get)(y)
+    y_labels = np.ravel(y_labels[:,0]) #shape from [99,1] to [99,]
+    if verbose:
+        print("Labels and counts after conversion")
+        unique, counts = np.unique(y_labels, return_counts=True)
+        print (np.asarray((unique, counts)).T)
+
+    return y_labels
+if interactive:
+    y_strings = get_ir2_y_string_labels(my_y, label_map = label_map_gps)
+    print("y_strings.shape",y_strings.shape,"dtype",y_strings.dtype)
+    print("First 5 entries", y_strings[:5])
+    print("Size of original array",my_y.size * my_y.itemsize, "Bytes")
+    print("Size of string array  ",y_strings.size * y_strings.itemsize, "Bytes")
+
+def clean_ir2(X, y, sub, ss_times):
+    """Deprecated, please use drop_ir2_nan and unify_ir2_labels directly.
+    This version calls those two functions using drop for compatibility."
+     """
+    X, y, sub, ss_times = drop_ir2_nan(X, y, sub, ss_times)
+    X, y, sub, ss_times = unify_ir2_labels(X, y, sub, ss_times, method = 'drop')
+    return X, y, sub, ss_times
+if interactive:
+    # get new copy of the arrays since they have been altered.
+    my_X, my_y, my_sub, my_ss_times, all_channel_list = get_ir2_from_ir1(ir1_df)
     my_X, my_y, my_sub, my_ss_times = clean_ir2(my_X, my_y, my_sub, my_ss_times)
-    print('IR2 shapes after cleaning', my_X.shape, my_y.shape, my_sub.shape)
-    headers = ("array","shape", "object type", "data type")
-    mydata = [("my_X:", my_X.shape, type(my_X), my_X.dtype),
-            ("my_y:", my_y.shape ,type(my_y), my_y.dtype),
-            ("my_sub:", my_sub.shape, type(my_sub), my_sub.dtype),
-            ("my_ss_times:", my_ss_times.shape, type(my_ss_times), my_ss_times.dtype)]
-    print("IR2 array info")
-    print(tabulate(mydata, headers=headers))
+    print(tabulate_numpy_arrays({'my_X':my_X,'my_y':my_y,'my_sub':my_sub,'my_ss_times':my_ss_times}))
 
 def drop_label_ir2_ir3(X, y, sub, ss_times, label_to_drop):
     """removes windows with label = label_to_drop
     This is primarily used to remove invalid windows, such as 'unknown' = 99
-    Returns updated version of X, y, sub"""
+    Returns updated version of X, y, sub, ss_times"""
     idx = []
     for i in range(y.shape[0]):
         if (y[i] == label_to_drop):
@@ -268,7 +372,7 @@ if interactive:
     print("IR2 array info after label drop")
     print(tabulate(mydata, headers=headers))
 
-def get_ir3_from_dict(ir1_dict, label_map):
+def get_ir3_from_dict(ir1_dict, label_map, label_method = 'drop'):
     """Processes a dictionary and combines the IR1 dataframes into a single
     IR3 set of numpy arrays.  Converts string labels to integers based on the
     passed label map.
@@ -277,7 +381,8 @@ def get_ir3_from_dict(ir1_dict, label_map):
     label_map: dict of labels (one entry per label column, most datasets will
          have only one with key = 'label'.  The item is a dict with keys of 
          all possible strings and item = corresponding int.)
-    num_channels: the number of data channels (# df columns - #labels - 1 for sub)
+    label_method: string if 'drop' all mixed labels will be discarded
+                         if 'mode' all labels in window set to mode of labels
     Returns:
     X - ndarray (float32) of all channels
     y - ndarray (int8) of labels, for multi-label datasets # labels = # columns
@@ -311,7 +416,9 @@ def get_ir3_from_dict(ir1_dict, label_map):
             print('Processing ', ir1_fname)
         ir1_df = assign_ints_ir1_labels(ir1_df, label_mapping_dict = label_map)
         ir2_X, ir2_y, ir2_sub, ir2_ss_time, channel_list = get_ir2_from_ir1(ir1_df)
-        ir2_X, ir2_y, ir2_sub, ir2_ss_time = clean_ir2(ir2_X, ir2_y, ir2_sub, ir2_ss_time)
+        ir2_X, ir2_y, ir2_sub, ir2_ss_time = drop_ir2_nan(ir2_X, ir2_y, ir2_sub, ir2_ss_time)
+        ir2_X, ir2_y, ir2_sub, ir2_ss_time = unify_ir2_labels(ir2_X, ir2_y, ir2_sub, ir2_ss_time, method = label_method)
+        #ir2_X, ir2_y, ir2_sub, ir2_ss_time = clean_ir2(ir2_X, ir2_y, ir2_sub, ir2_ss_time)
         ir2_X, ir2_y, ir2_sub, ir2_ss_time = drop_label_ir2_ir3(ir2_X, ir2_y, ir2_sub, ir2_ss_time, 99)
         ir3_X = np.vstack([ir3_X, ir2_X])
         ir3_y = np.vstack([ir3_y, ir2_y])
