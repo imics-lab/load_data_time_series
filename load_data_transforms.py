@@ -299,7 +299,7 @@ def get_ir2_y_string_labels(y,label_map):
     returns:
         y - a IR2 or IR3 numpy array of string class labels"""
     # this code adapted from our Semi-Supervised-HAR.ipynb
-    str_to_key_dict = label_map_gps['label']
+    str_to_key_dict = label_map['label']
     key_to_str_dict = dict([(value, key) for key, value in str_to_key_dict.items()])
     if verbose:
         "Converting integer encoded labels back to original strings"
