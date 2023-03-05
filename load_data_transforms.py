@@ -294,13 +294,14 @@ def get_ir2_y_string_labels(y,label_map):
     used.  Currently only supports a single label, shape y = (instance,1)
     NOTE: This greatly increases the size of the array (for GPS dataset 44X)
     args:
-        y - a IR2 or IR3 numpy array of int class labels
+        y - a IR2 or IR3 numpy array of int class labels, shape (instances,1)
         label_map - a dict containing the string to int encodings
     returns:
-        y - a IR2 or IR3 numpy array of string class labels"""
+        y - a IR2 or IR3 numpy array of string class labels, shape (instances,1)"""
     # this code adapted from our Semi-Supervised-HAR.ipynb
     str_to_key_dict = label_map['label']
     key_to_str_dict = dict([(value, key) for key, value in str_to_key_dict.items()])
+    
     if verbose:
         "Converting integer encoded labels back to original strings"
         print(str_to_key_dict)
@@ -310,13 +311,12 @@ def get_ir2_y_string_labels(y,label_map):
         print (np.asarray((unique, counts)).T)
 
     y_labels = np.vectorize(key_to_str_dict.get)(y)
-    #y_labels = np.vectorize(str_to_key_dict.get)(y)
-    y_labels = np.ravel(y_labels[:,0]) #shape from [99,1] to [99,]
+    y_labels = y_labels.reshape((-1, 1)) # reshape from (__,) to (__,1)
+    
     if verbose:
         print("Labels and counts after conversion")
         unique, counts = np.unique(y_labels, return_counts=True)
         print (np.asarray((unique, counts)).T)
-
     return y_labels
 if interactive:
     y_strings = get_ir2_y_string_labels(my_y, label_map = label_map_gps)
