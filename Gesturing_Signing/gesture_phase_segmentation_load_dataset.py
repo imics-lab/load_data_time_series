@@ -228,7 +228,7 @@ def gesture_phase_segmentation_load_dataset(
     #df_dict = get_gps_ir1_dict()
     #X, y, sub, ss_times, xys_info = get_ir3_from_dict(df_dict)
     ir1_dict = get_gps_ir1_dict()
-    X, y, sub, ss_times, xys_info = xform.get_ir3_from_dict(ir1_dict, label_map = label_map_gps, num_channels = 19)
+    X, y, sub, ss_times, xys_info = xform.get_ir3_from_dict(ir1_dict, label_map = label_map_gps)
     #if (not use_saved_xysub):
     #   X, y, sub, xys_info = get_ir3()
     # Drop unwanted channels from X
