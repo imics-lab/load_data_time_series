@@ -13,8 +13,8 @@ The basic flow is:
 * Download and unzip the dataset if not already present
 * Convert each recording *session* into Intermediate Representation 1 (IR1) format - a datetime indexed pandas dataframe with columns for each channel plus the label and subject number.
 * Transform the IR1 into IR2 - a set of three numpy arrays containing sliding window samples
-   * X = (samples, time steps per sample, channels)  
-   * y =  (samples, label) # activity classification  
+   * X = (samples, time steps per sample, channels)
+   * y =  (samples, label) # activity classification
    * s =  (samples, subject) # subject number
 * Clean and further transforms the IR2 arrays as needed - note the transforms that can be applied here are train vs test dependent.   For example, the IR2 arrays in the training set may be rebalanced, but those in the test set should not.
 * Concatenate the processed IR2 arrays into the final returned train/validate/test arrays.
@@ -24,7 +24,7 @@ Set interactive to true to run the Jupyter Notebook version.  Note most of the c
 
 <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/"><img alt="Creative Commons License" style="border-width:0" src="https://i.creativecommons.org/l/by-sa/4.0/88x31.png" /></a><br />This work is licensed under a <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">Creative Commons Attribution-ShareAlike 4.0 International License</a>.
 
-[Lee B. Hinkle](https://userweb.cs.txstate.edu/~lbh31/), Texas State University, [IMICS Lab](https://imics.wp.txstate.edu/)  
+[Lee B. Hinkle](https://userweb.cs.txstate.edu/~lbh31/), Texas State University, [IMICS Lab](https://imics.wp.txstate.edu/)
 TODO:
 * Some files (a1_raw) have time discontinuity.  Need to address when forming sliding windows.
 * The one-hot encoding should be moved to a common function.
@@ -50,7 +50,7 @@ import urllib.request # to get files from web w/o !wget
 import matplotlib.pyplot as plt
 
 def get_py_file(fname, url):
-    """checks for local file, if none downloads from URL.    
+    """checks for local file, if none downloads from URL.
     :return: nothing"""
     #fname = 'load_data_utils.py'
     #ffname = os.path.join(my_dir,fname)
@@ -77,9 +77,9 @@ verbose = True
 
 # Gesture-Phase-Segmentation Dataset unique params
 xform.time_steps = 30
-xform.stride = 1
+xform.stride = 5
 # the label map should contain all possible labels, it is used to convert from
-# IR1 dataframe string labels of type categorical (saves a ton of memory) to 
+# IR1 dataframe string labels of type categorical (saves a ton of memory) to
 # integers for the IR2 and beyond numpy ndarrays.
 label_map_gps = {"label":     {"Rest": 0, "Preparation": 1, "Stroke": 2,
                                 "Hold": 3, "Retraction": 4}}
@@ -115,7 +115,7 @@ def get_gesture_phase_dataset():
 if interactive:
     get_gesture_phase_dataset()
 
-def get_gps_ir1_dict():
+def get_gps_ir1_dict(include_story = False):
     """reads the Gesture-Phase-Segmentation raw .csv files in the global
     'dataset_dir'. This version uses dict to preserve original filenames.
     Returns: a dict containing IR1 dataframes."""
@@ -130,7 +130,7 @@ def get_gps_ir1_dict():
         # print(subject, story, ffname)
         df = pd.read_csv(ffname)
         # change to 32-bit, credit/ref https://stackoverflow.com/questions/69188132/how-to-convert-all-float64-columns-to-float32-in-pandas
-        # Select columns with 'float64' dtype  
+        # Select columns with 'float64' dtype
         float64_cols = list(df.select_dtypes(include='float64'))
         # The same code again calling the columns
         df[float64_cols] = df[float64_cols].astype('float32')
@@ -142,13 +142,14 @@ def get_gps_ir1_dict():
         df['sub'] = subject
         df['sub'] = [ ord(x) - 96 for x in df['sub']] # ord is unicode char
         df['sub']=df['sub'].astype('int8')
-        df['story'] = story
-        df['story']=df['story'].astype('int8')
+        if include_story:
+            df['story'] = story
+            df['story']=df['story'].astype('int8')
         df.rename(columns={"phase": "label"}, inplace = True, errors="raise") # phase was GPS dataset specific
 
         # kinect sample rate is 15 or 30 fps, timestamp appears to
         # be a running counter not an actual UTC time.
-        df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms') 
+        df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
         df.set_index('datetime',inplace=True)
         df = df.drop('timestamp', axis=1)
         ir1_df_dict[item.split('.')[0]]=df # key is root name of csv
@@ -157,9 +158,37 @@ if interactive:
     ir1_dict = get_gps_ir1_dict()
     print(ir1_dict.keys())
 
+def split_ir1_dict_by_sub(ir1_dict, split_subj_dict):
+    """This splits the ir1 dictionary of all files into three separate ones
+    based on the subject and split_subj_dict.  Primarily used to change the
+    processing between the train/valid sets (mixed windows discarded, classes
+    balanced) and the test test (mode labeling, little other processing)"""
+    # TODO: check for mixed subs and double allocations
+    # empty dictionaries
+    ir1_df_dict_train = dict()
+    ir1_df_dict_valid = dict()
+    ir1_df_dict_test = dict()
+    for key, item in ir1_dict.items():
+        extracted_sub = item['sub'].iloc[0] # first row sub number
+        #print(key,item['sub'].iloc[0]) # first row sub number
+        if extracted_sub in split_subj_dict['train_subj']:
+            ir1_df_dict_train[key] = item
+        if extracted_sub in split_subj_dict['valid_subj']:
+            ir1_df_dict_valid[key] = item
+        if extracted_sub in split_subj_dict['test_subj']:
+            ir1_df_dict_test[key] = item
+    return ir1_df_dict_train,ir1_df_dict_valid,ir1_df_dict_test
+
+if interactive:
+    split_subj = dict(train_subj = [1], valid_subj = [2], test_subj = [3])
+    ir1_df_dict_train,ir1_df_dict_valid,ir1_df_dict_test = split_ir1_dict_by_sub(ir1_dict, split_subj_dict = split_subj)
+    print("Train:", ir1_df_dict_train.keys())
+    print("Valid:",ir1_df_dict_valid.keys())
+    print("Test :",ir1_df_dict_test.keys())
+
 """# Exploratory code for dealing with the data gaps in the dataset"""
 
-if interactive: 
+if interactive:
     my_df = ir1_dict['a1_raw']
     print(type(my_df))
     print(my_df.dtypes)
@@ -167,7 +196,7 @@ if interactive:
     my_df['lhx'].plot(figsize=(20, 10))
 
 if interactive:
-    # labels will plot if they have been converted to ints 
+    # labels will plot if they have been converted to ints
     my_df = xform.assign_ints_ir1_labels(ir1_dict['a1_raw'], label_mapping_dict = label_map_gps)
     my_df.plot(subplots=True, figsize=(20, 10)) # yay Pandas
 
@@ -202,14 +231,11 @@ if interactive:
 """# The dataset specific code to generate the dictionary of IR1 dataframes is complete.  Now use Shared Transforms to generate the final output arrays."""
 
 def gesture_phase_segmentation_load_dataset(
-    #verbose = False,
-    #use_saved_xysub = False, # get X,y,sub from zip, True = faster to used saved ones
     incl_val_group = False, # split train into train and validate
     split_subj = dict
-                (train_subj = [1,2,3],
-                validation_subj = [],
-                test_subj = []),
-    #keep_channel_list = ['accel_ttl'],
+                (train_subj = [1,2],
+                valid_subj = [],
+                test_subj = [3]),
     one_hot_encode = True, # make y into multi-column one-hot, one for each activity
     return_info_dict = False, # return dict of meta info along with ndarrays
     suppress_warn = False # special case for stratified warning
@@ -224,49 +250,58 @@ def gesture_phase_segmentation_load_dataset(
     today = date.today()
     log_info += today.strftime("%B %d, %Y") + "\n"
     log_info += "sub dict = " + str(split_subj) + "\n"
-    #get_gesture_phase_dataset()
-    #df_dict = get_gps_ir1_dict()
-    #X, y, sub, ss_times, xys_info = get_ir3_from_dict(df_dict)
+
     ir1_dict = get_gps_ir1_dict()
-    X, y, sub, ss_times, xys_info = xform.get_ir3_from_dict(ir1_dict, label_map = label_map_gps)
-    #if (not use_saved_xysub):
-    #   X, y, sub, xys_info = get_ir3()
-    # Drop unwanted channels from X
-    #log_info += "Keeping channels" + str(keep_channel_list) + "\n"
-    #X = limit_channel_ir3(X, keep_channel_list = keep_channel_list)
-    # write initial array info to log_info
-    headers = ("Initial Array","shape", "object type", "data type")
-    mydata = [("X", X.shape, type(X), X.dtype),
-              ("y", y.shape, type(y), y.dtype),
-              ("sub", sub.shape, type(sub), sub.dtype)]
-    if (verbose):
-        print(tabulate(mydata, headers=headers))
-    log_info += tabulate(mydata, headers=headers) + "\n"
+
+    # split the IR1 dict by subject so each can be processed separately.
+    ir1_dict_train,ir1_dict_valid,ir1_dict_test = split_ir1_dict_by_sub(ir1_dict, split_subj_dict = split_subj)
+    if True:  # change back to verbose when done debugging!
+        print("Train:", ir1_dict_train.keys())
+        print("Valid:",ir1_dict_valid.keys())
+        print("Test :",ir1_dict_test.keys())
+    x_train, y_train, sub_train, ss_times_train, xys_info = xform.get_ir3_from_dict(ir1_dict_train, label_map = label_map_gps, label_method = 'drop')
+    #x_valid, y_valid, sub_valid, ss_times_valid, xys_info = xform.get_ir3_from_dict(ir1_dict_valid, label_map = label_map_gps)
+    x_test, y_test, sub_test, ss_times_test, xys_info = xform.get_ir3_from_dict(ir1_dict_test, label_map = label_map_gps, label_method = 'mode')
+
+    # headers = ("Initial Array","shape", "object type", "data type")
+    # mydata = [("X", X.shape, type(X), X.dtype),
+    #           ("y", y.shape, type(y), y.dtype),
+    #           ("sub", sub.shape, type(sub), sub.dtype)]
+    # if (verbose):
+    #     print(tabulate(mydata, headers=headers))
+    # log_info += tabulate(mydata, headers=headers) + "\n"
 
     if (one_hot_encode):
+        # using newer code, ints only, from Fusion of Learned Reps work
+        enc = OneHotEncoder(categories='auto', sparse=False)
+        y_train = enc.fit_transform(y_train)
+        #y_valid = enc.fit_transform(y_valid)
+        y_test = enc.fit_transform(y_test)
         # integer encode
-        y_vector = np.ravel(y) #encoder won't take column vector
-        le = LabelEncoder()
-        integer_encoded = le.fit_transform(y_vector) #convert from string to int
-        name_mapping = dict(zip(le.classes_, le.transform(le.classes_)))
-        if (verbose):
-            print("One-hot-encoding: category names -> int -> one-hot \n")
-            print(name_mapping) # seems risky as interim step before one-hot
-        log_info += "One Hot:" + str(name_mapping) +"\n\n"
-        onehot_encoder = OneHotEncoder(sparse=False)
-        integer_encoded = integer_encoded.reshape(len(integer_encoded), 1)
-        onehot_encoded = onehot_encoder.fit_transform(integer_encoded)
-        y=onehot_encoded.astype('uint8')
+        # y_vector_train = np.ravel(y_train) #encoder won't take column vector
+        # y_vector_valid = np.ravel(y_valid) #encoder won't take column vector
+        # y_vector_test = np.ravel(y_test) #encoder won't take column vector
+        # le = LabelEncoder()
+        # integer_encoded = le.fit_transform(y_vector_train) #convert from string to int
+        # name_mapping = dict(zip(le.classes_, le.transform(le.classes_)))
+        # if (verbose):
+        #     print("One-hot-encoding: category names -> int -> one-hot \n")
+        #     print(name_mapping) # seems risky as interim step before one-hot
+        # log_info += "One Hot:" + str(name_mapping) +"\n\n"
+        # onehot_encoder = OneHotEncoder(sparse_output=False)
+        # integer_encoded = integer_encoded.reshape(len(integer_encoded), 1)
+        # onehot_encoded = onehot_encoder.fit_transform(integer_encoded)
+        # y=onehot_encoded.astype('uint8')
         #return X,y
     # split by subject number pass in dictionary
-    sub_num = np.ravel(sub[ : , 0] ) # convert shape to (1047,)
+    # sub_num = np.ravel(sub[ : , 0] ) # convert shape to (1047,)
     # this code is different from typical due to limited subjects,
-    # all not test subjects data is placed into train which is then 
+    # all not test subjects data is placed into train which is then
     # split using stratification - validation group is not sub independent
-    train_index = np.nonzero(np.isin(sub_num, split_subj['train_subj'] + 
-                                        split_subj['validation_subj']))
-    x_train = X[train_index]
-    y_train = y[train_index]
+    # train_index = np.nonzero(np.isin(sub_num, split_subj['train_subj'] +
+    #                                     split_subj['valid_subj']))
+    # x_train = X[train_index]
+    # y_train = y[train_index]
     if (incl_val_group):
         if not suppress_warn:
             print("Warning: Due to limited subjects the validation group is a stratified")
@@ -278,18 +313,18 @@ def gesture_phase_segmentation_load_dataset(
         # activities for inclusion in validation.  See
         # https://github.com/imics-lab/Semi-Supervised-HAR-e4-Wristband
         # https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.train_test_split.html
-        x_train, x_validation, y_train, y_validation = train_test_split(x_train, y_train, test_size=0.10, random_state=42, stratify=y_train)
+        x_train, x_valid, y_train, y_valid = train_test_split(x_train, y_train, test_size=0.10, random_state=42, stratify=y_train)
 
-    test_index = np.nonzero(np.isin(sub_num, split_subj['test_subj']))
-    x_test = X[test_index]
-    y_test = y[test_index]
+    # test_index = np.nonzero(np.isin(sub_num, split_subj['test_subj']))
+    # x_test = X[test_index]
+    # y_test = y[test_index]
 
     headers = ("Returned Array","shape", "object type", "data type")
     mydata = [("x_train:", x_train.shape, type(x_train), x_train.dtype),
                     ("y_train:", y_train.shape ,type(y_train), y_train.dtype)]
     if (incl_val_group):
-        mydata += [("x_validation:", x_validation.shape, type(x_validation), x_validation.dtype),
-                        ("y_validation:", y_validation.shape ,type(y_validation), y_validation.dtype)]
+        mydata += [("x_valid:", x_valid.shape, type(x_valid), x_valid.dtype),
+                        ("y_valid:", y_valid.shape ,type(y_valid), y_valid.dtype)]
     mydata += [("x_test:", x_test.shape, type(x_test), x_test.dtype),
                     ("y_test:", y_test.shape ,type(y_test), y_test.dtype)]
     if (verbose):
@@ -297,9 +332,9 @@ def gesture_phase_segmentation_load_dataset(
     log_info += tabulate(mydata, headers=headers)
     if (incl_val_group):
         if (return_info_dict):
-            return x_train, y_train, x_validation, y_validation, x_test, y_test, log_info
+            return x_train, y_train, x_valid, y_valid, x_test, y_test, log_info
         else:
-            return x_train, y_train, x_validation, y_validation, x_test, y_test
+            return x_train, y_train, x_valid, y_valid, x_test, y_test
     else:
         if (return_info_dict):
             return x_train, y_train, x_test, y_test, log_info
