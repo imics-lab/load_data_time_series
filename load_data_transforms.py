@@ -121,17 +121,17 @@ def assign_ints_ir1_labels(df, label_mapping_dict):
     # numpy arrays - not an issue for small datasets but a big memory user
     # for larger ones.
     # Credit to this nice writeup https://pbpython.com/categorical-encoding.html
-    if verbose:
-        print("assign_ints_ir1_labels() converting categorical strings to ints")
-        print("df['label'] value counts before")
-        print(df['label'].value_counts())
-    df = df.replace(label_mapping_dict)
-    df['label']=df['label'].astype('int8') # TODO this only works with single label
-    if verbose:
-        print("df['label'] value counts after")
-        print(df['label'].value_counts())
+    for label_name in label_mapping_dict: 
+        if verbose:
+            print("assign_ints_ir1_labels() converting categorical strings to ints")
+            print("df["+label_name+"] value counts before")
+            print(df[label_name].value_counts())
+        df[label_name] = df[label_name].replace(label_mapping_dict[label_name])
+        df[label_name]=df[label_name].astype('int8') # force smaller type
+        if verbose:
+            print("df["+label_name+"] value counts after")
+            print(df[label_name].value_counts())
     return df
-
 if interactive:
     # This label mapping for Gesture-Phase-Segmentation dataset is in the order
     # of the readme.txt.  A second label entry can be added - see url above.
@@ -392,7 +392,6 @@ def get_ir3_from_dict(ir1_dict, label_map, label_method = 'drop'):
     """
     # NOTE - this is really hard to debug since an ir1_dict is required.
     # I've been just working on it in the TWRistAR loader paste the working code here.
-    # Need to figure out number of channels for original array dimensions
     df_list = list(ir1_dict) # ir1_dict.keys() returns a dict_keys type
     col_list = list(ir1_dict[df_list[0]].columns) # all columns in df
     label_list = list(label_map) # in case of multi-labeled dataset
@@ -418,7 +417,6 @@ def get_ir3_from_dict(ir1_dict, label_map, label_method = 'drop'):
         ir2_X, ir2_y, ir2_sub, ir2_ss_time, channel_list = get_ir2_from_ir1(ir1_df)
         ir2_X, ir2_y, ir2_sub, ir2_ss_time = drop_ir2_nan(ir2_X, ir2_y, ir2_sub, ir2_ss_time)
         ir2_X, ir2_y, ir2_sub, ir2_ss_time = unify_ir2_labels(ir2_X, ir2_y, ir2_sub, ir2_ss_time, method = label_method)
-        #ir2_X, ir2_y, ir2_sub, ir2_ss_time = clean_ir2(ir2_X, ir2_y, ir2_sub, ir2_ss_time)
         ir2_X, ir2_y, ir2_sub, ir2_ss_time = drop_label_ir2_ir3(ir2_X, ir2_y, ir2_sub, ir2_ss_time, 99)
         ir3_X = np.vstack([ir3_X, ir2_X])
         ir3_y = np.vstack([ir3_y, ir2_y])
