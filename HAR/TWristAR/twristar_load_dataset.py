@@ -33,47 +33,52 @@ Acknowledgement to and a good example of the WISDM format being pre-processed is
 
 [Lee B. Hinkle](https://userweb.cs.txstate.edu/~lbh31/), Texas State University, [IMICS Lab](https://imics.wp.txstate.edu/)  
 TODO:
-* The IR3 transform could be further optimized by taking a dictionary of IR1 dataframes as was done in the later datasets.
-* log_info needs to be updated to dictionary format so we can read things like the channel names automatically.
 * Time is off by 6 hrs due to time zone issues - adjusted in Excel/csv but would be good to show it in the correct time zone.
 * Need to incorporate session numbers or just use the alternate .csv files where validation was 'fake' subs 11 and 22 which were just a few of the sessions from subjects 1 and 2.  This was done in the Semi-Supervised version of the loader for WISHWell but not integrated back into this version.
 
-# Import Libraries and Common Load Dataset Code (from IMICS public repo)
+# Import Libraries
 """
 
 import os
 import shutil #https://docs.python.org/3/library/shutil.html
 from shutil import unpack_archive # to unzip
-import time
-import pandas as pd
-import numpy as np
-from numpy import savetxt
-from tabulate import tabulate # for verbose tables, showing data
-from tensorflow.keras.utils import to_categorical # for one-hot encoding
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from sklearn.preprocessing import OneHotEncoder
-from time import gmtime, strftime, localtime #for displaying Linux UTC timestamps in hh:mm:ss
-from datetime import datetime, date
 import urllib.request # to get files from web w/o !wget
 
-def get_py_file(fname, url):
+import time
+from time import gmtime, strftime, localtime #for displaying Linux UTC timestamps in hh:mm:ss
+from datetime import datetime, date
+
+import pandas as pd
+import numpy as np
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
+
+def get_web_file(fname, url):
     """checks for local file, if none downloads from URL.    
     :return: nothing"""
-    #fname = 'load_data_utils.py'
-    #ffname = os.path.join(my_dir,fname)
     if (os.path.exists(fname)):
         print ("Local",fname, "found, skipping download")
     else:
-        print("Downloading",fname, "from IMICS git repo")
+        print("Downloading",fname, "from", url)
         urllib.request.urlretrieve(url, filename=fname)
 
-get_py_file(fname = 'load_data_utils.py', url = 'https://raw.githubusercontent.com/imics-lab/load_data_time_series/main/load_data_utils.py')
-get_py_file(fname = 'load_data_transforms.py', url = 'https://raw.githubusercontent.com/imics-lab/load_data_time_series/main/load_data_transforms.py')
+"""# Load shared transform (xforms) functions and utils from IMICS Public Repo
 
-# common transforms and utils used by the individual loaders
-import load_data_transforms as xform
-import load_data_utils as utils
+
+"""
+
+try:
+    import load_data_transforms as xforms
+except:
+    get_web_file(fname = 'load_data_transforms.py', url = 'https://raw.githubusercontent.com/imics-lab/load_data_time_series/main/load_data_transforms.py')
+    import load_data_transforms as xforms
+
+try:
+    import load_data_utils as utils  
+except:
+    get_web_file(fname = 'load_data_utils.py', url = 'https://raw.githubusercontent.com/imics-lab/load_data_time_series/main/load_data_utils.py')
+    import load_data_utils as utils
 
 """# Global and Dataset Parameters"""
 
@@ -89,10 +94,10 @@ verbose = True
 
 # dataset parameters
 all_channel_list = ['accel_x', 'accel_y', 'accel_z','accel_ttl','bvp','eda','p_temp']
-# frequency = 32 - note this is hardcoded due to the unique sample freqencies
-# that differ between the individual e4 sensors
-xform.time_steps = 96 # three seconds at 32Hz
-xform.stride = 32 # one second step for each sliding window
+# frequency = 32 - unlike some of the other loaders this is hardcoded due to
+# the unique sample freqencies that differ between the individual e4 sensors
+xforms.time_steps = 96 # three seconds at 32Hz
+xforms.stride = 32 # one second step for each sliding window
 # The label_map_<dataset> contains a mapping from strings to ints for all
 # possible labels in the entire dataset.   This allows for predictable conversion
 # regardless of the slices.  I'm using 99 for 'unknown' which will be dropped
@@ -323,6 +328,7 @@ if interactive:
     print ("Label Counts - # samples before sliding window")
     print (ir1_df['label'].value_counts())
 
+#from pandas._libs.tslibs.parsing import try_parse_date_and_time
 def get_twristar_ir1_dict():
     """reads the TWRistAR dataset and converts each "session file" to an IR1
     dataframe.  The goal here is to capture and convert all raw data into
@@ -384,11 +390,20 @@ def get_twristar_ir1_dict():
         ir1_df_dict[root_fname]=df # key is root name in the file
     return ir1_df_dict
 if interactive:
-    # scripted = False
+    verbose = False
     ir1_dict = get_twristar_ir1_dict()
-    print(ir1_dict.keys())
+    print('Scripted IR1 dataframes:',ir1_dict.keys())
+    for df_name, df in ir1_dict.items():
+        display(df.head())
+        break # just want one
+    scripted = False # get the free-form walk IR1s instead
     ir1_dict = get_twristar_ir1_dict()
-    print(ir1_dict.keys())
+    print('\nScripted IR1 dataframes:',ir1_dict.keys())
+    for df_name, df in ir1_dict.items():
+        display(df.head())
+        break # just want one
+    scripted = True
+    verbose = True
 
 """# The dataset specific code to generate the dictionary of IR1 dataframes is complete.  Now use Shared Transforms to generate the final output arrays."""
 
@@ -396,10 +411,10 @@ def twristar_load_dataset(
     incl_val_group = False, # split train into train and validate
     split_subj = dict
                 (train_subj = [1,2],
-                validation_subj = [],
+                valid_subj = [],
                 test_subj = [3]),
     keep_channel_list = ['accel_ttl'],
-    one_hot_encode = True, # make y into multi-column one-hot, one for each activity
+    one_hot_encode = False, # make y into multi-column one-hot, one for each activity
     return_info_dict = False, # return dict of meta info along with ndarrays
     suppress_warn = False # special case for stratified warning
     ):
@@ -415,44 +430,34 @@ def twristar_load_dataset(
     else:
         label_xform = 'mode' # for unscripted assign mode label to every window 
     ir1_dict = get_twristar_ir1_dict()
-    X, y, sub, ss_times, xys_info = xform.get_ir3_from_dict(ir1_dict, 
+    X, y, sub, ss_times, xys_info = xforms.get_ir3_from_dict(ir1_dict, 
                                                             label_map = label_map_twristar,
                                                             label_method = label_xform) 
     # Drop unwanted channels from X
-    # TODO:  Channel list should be automatically pulled from info dict.
-    # all_channel_list = ['accel_x', 'accel_y', 'accel_z','accel_ttl','bvp','eda','p_temp']
     log_info += "Keeping channels" + str(keep_channel_list) + "\n"
-    X = xform.limit_channel_ir3(X, all_channel_list = all_channel_list, keep_channel_list = keep_channel_list)
+    X = xforms.limit_channel_ir3(X, all_channel_list = all_channel_list, keep_channel_list = keep_channel_list)
     # write initial array info to log_info
     log_info += "Initial Arrays\n"
     log_info += utils.tabulate_numpy_arrays({'X':X,'y':y,'sub':sub,'ss_times':ss_times})+'\n'
-    
-    #One-Hot-Encode y...there must be a better way when starting with strings
-    #https://machinelearningmastery.com/how-to-one-hot-encode-sequence-data-in-python/
-    # Need to look at https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html
 
     if (one_hot_encode):
-        # integer encode
-        y_vector = np.ravel(y) #encoder won't take column vector
-        le = LabelEncoder()
-        integer_encoded = le.fit_transform(y_vector) #convert from string to int
-        name_mapping = dict(zip(le.classes_, le.transform(le.classes_)))
-        if (verbose):
-            print("One-hot-encoding: category names -> int -> one-hot \n")
-            print(name_mapping) # seems risky as interim step before one-hot
-        log_info += "One Hot:" + str(name_mapping) +"\n\n"
-        onehot_encoder = OneHotEncoder(sparse=False)
-        integer_encoded = integer_encoded.reshape(len(integer_encoded), 1)
-        onehot_encoded = onehot_encoder.fit_transform(integer_encoded)
-        y=onehot_encoded.astype('uint8')
-        #return X,y
-    # split by subject number pass in dictionary
+        # tried to specify list to make sure all possible classes are encoded
+        # label_list = list(label_map_twristar['label'].keys())
+        # then pass categories=label_list but this does not work because the
+        # list is longer than the classes due to the inclusion of undefined.
+        # Note sparse was changed to sparse_output but that fails on my Mac
+        enc = OneHotEncoder(categories='auto', sparse=False)
+        y = enc.fit_transform(y)
+        y=y.astype('uint8')
+        # print(enc.categories_)
+        log_info += "y has been one hot encoded" + str(enc.categories_) + '\n'
+
     sub_num = np.ravel(sub[ : , 0] ) # convert shape to (1047,)
     # this code is different from typical due to limited subjects,
     # all not test subjects data is placed into train which is then 
     # split using stratification - validation group is not sub independent
     train_index = np.nonzero(np.isin(sub_num, split_subj['train_subj'] + 
-                                        split_subj['validation_subj']))
+                                        split_subj['valid_subj']))
     x_train = X[train_index]
     y_train = y[train_index]
     if (incl_val_group):
@@ -466,29 +471,23 @@ def twristar_load_dataset(
         # activities for inclusion in validation.  See
         # https://github.com/imics-lab/Semi-Supervised-HAR-e4-Wristband
         # https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.train_test_split.html
-        x_train, x_validation, y_train, y_validation = train_test_split(x_train, y_train, test_size=0.10, random_state=42, stratify=y_train)
+        x_train, x_valid, y_train, y_valid = train_test_split(x_train, y_train, test_size=0.10, random_state=42, stratify=y_train)
 
     test_index = np.nonzero(np.isin(sub_num, split_subj['test_subj']))
     x_test = X[test_index]
     y_test = y[test_index]
 
-    headers = ("Returned Array","shape", "object type", "data type")
-    mydata = [("x_train:", x_train.shape, type(x_train), x_train.dtype),
-                    ("y_train:", y_train.shape ,type(y_train), y_train.dtype)]
     if (incl_val_group):
-        mydata += [("x_validation:", x_validation.shape, type(x_validation), x_validation.dtype),
-                        ("y_validation:", y_validation.shape ,type(y_validation), y_validation.dtype)]
-    mydata += [("x_test:", x_test.shape, type(x_test), x_test.dtype),
-                    ("y_test:", y_test.shape ,type(y_test), y_test.dtype)]
-    if (verbose):
-        print(tabulate(mydata, headers=headers))
-    log_info += tabulate(mydata, headers=headers)
-    if (incl_val_group):
+        log_info += utils.tabulate_numpy_arrays({'x_train': x_train, 'y_train': y_train,
+                                       'x_valid': x_valid, 'y_valid': y_valid,
+                                   'x_test': x_test, 'y_test': y_test})   
         if (return_info_dict):
-            return x_train, y_train, x_validation, y_validation, x_test, y_test, log_info
+            return x_train, y_train, x_valid, y_valid, x_test, y_test, log_info
         else:
-            return x_train, y_train, x_validation, y_validation, x_test, y_test
+            return x_train, y_train, x_valid, y_valid, x_test, y_test
     else:
+        log_info += utils.tabulate_numpy_arrays({'x_train': x_train, 'y_train': y_train,
+                                   'x_test': x_test, 'y_test': y_test})
         if (return_info_dict):
             return x_train, y_train, x_test, y_test, log_info
         else:
@@ -503,6 +502,25 @@ if __name__ == "__main__":
                              = twristar_load_dataset()
     print(utils.tabulate_numpy_arrays({'x_train': x_train, 'y_train': y_train,
                                    'x_test': x_test, 'y_test': y_test}))
+    print ('\n','-'*72)
+
+    print("Get TWristAR with one-hot-encoded labels - dimension of y will be 6")
+    x_train, y_train, x_test, y_test \
+                             = twristar_load_dataset(one_hot_encode=True)
+    print(utils.tabulate_numpy_arrays({'x_train': x_train, 'y_train': y_train,
+                                   'x_test': x_test, 'y_test': y_test}))
+    print ("Sum of the columns, # of one-hot instances")
+    print (y_train.sum(axis=0))
+    y_labels = np.argmax(y_train, axis=-1) # undo one-hot encoding
+    
+    print("Back to integer encoded")
+    unique, counts = np.unique(y_labels, return_counts=True)
+    print (np.asarray((unique, counts)).T)
+
+    print("Back to strings using xforms.get_ir2_y_string_labels and label_map")
+    y_strings = xforms.get_ir2_y_string_labels(y_labels, label_map = label_map_twristar)
+    unique, counts = np.unique(y_strings, return_counts=True)
+    print (np.asarray((unique, counts)).T)
     print ('\n','-'*72)
 
     print("Get TWristAR with validation group, info file, and four channels\n")
@@ -554,7 +572,7 @@ if __name__ == "__main__":
     x_train, y_train, x_test, y_test, log_accelxyz\
                              = twristar_load_dataset(
                                  split_subj = dict (train_subj = [1],
-                                                    validation_subj = [],
+                                                    valid_subj = [],
                                                     test_subj = [2]),
                                  keep_channel_list = ['accel_x', 'accel_y', 'accel_z', 'accel_ttl'],
                                  return_info_dict = True,
