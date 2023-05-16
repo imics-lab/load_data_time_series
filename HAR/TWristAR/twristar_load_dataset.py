@@ -12,18 +12,20 @@ Loads the raw e4 signals and .csv label files from the [Zenodo repository](https
 The basic flow is:
 * Download and unzip the dataset if not already present
 * Convert each recording *session* into Intermediate Representation 1 (IR1) format - a datetime indexed pandas dataframe with columns for each channel plus the label and subject number.
-* Transform the IR1 into IR2 - a set of three numpy arrays containing sliding window samples
-   * X = (samples, time steps per sample, channels)  
-   * y =  (samples, label) # activity classification  
-   * s =  (samples, subject) # subject number
-* Clean and further transforms the IR2 arrays as needed - note the transforms that can be applied here are train vs test dependent.   For example, the IR2 arrays in the training set may be rebalanced, but those in the test set should not.
+* Put all IR1 dataframes into a dictionary with key = source filename
+* Allocate the IR1s into train and test IR2s based on subject dictionary.  A single IR1 will generate multiple sliding window instances.
+   * X = (instances, time steps per instance, channels)  
+   * y =  (instances, label) # activity classification  
+   * s =  (instances, sub) # subject number
+   * ss_time = (instances, 2) # start and stop time of the window
+* Clean and further transform the IR2 arrays as needed - note the transforms that can be applied here are train vs test dependent.   For example, the IR2 arrays in the training set may be dropped if multi-class or rebalanced, but those in the test set should not.
 * Concatenate the processed IR2 arrays into the final returned train/validate/test arrays.
 
 TWRistAR is small and easily downloadable so there is no option to used saved Intermediate Representations here as there is in some of the loaders for larger datasets.
 
-Set interactive to true to run the Jupyter Notebook version.  Note most of the calls are setup to test the functions, not process the entire dataset, to do that set interactive to false and run all so that main executes.   This notebook can be saved and run as a python file as well.
+Set interactive to true to run the Jupyter Notebook version.  Note most of the interactive calls are setup to test the functions, not process the entire dataset, to do that set interactive to false and run all so that main executes.   This notebook can be saved and run as a python file as well.
 
-This video describes the code https://mediaflo.txstate.edu/Watch/e4_data_processing. (updates have been made since this was made)
+This video describes the code https://mediaflo.txstate.edu/Watch/e4_data_processing. (many updates have been made since this was recorded)
 
 
 Acknowledgement to and a good example of the WISDM format being pre-processed is https://towardsdatascience.com/human-activity-recognition-har-tutorial-with-keras-and-core-ml-part-1-8c05e365dfa0  by Nils Ackermann.  
@@ -34,6 +36,7 @@ Acknowledgement to and a good example of the WISDM format being pre-processed is
 [Lee B. Hinkle](https://userweb.cs.txstate.edu/~lbh31/), Texas State University, [IMICS Lab](https://imics.wp.txstate.edu/)  
 TODO:
 * Time is off by 6 hrs due to time zone issues - adjusted in Excel/csv but would be good to show it in the correct time zone.
+* The train and test groups for scripted activities are handled identically which is probably OK for TWristAR since it is balanced but it would be better to separate the big X, y, sub arrays out before dropping windows etc.
 * Need to incorporate session numbers or just use the alternate .csv files where validation was 'fake' subs 11 and 22 which were just a few of the sessions from subjects 1 and 2.  This was done in the Semi-Supervised version of the loader for WISHWell but not integrated back into this version.
 
 # Import Libraries
@@ -92,6 +95,8 @@ if not os.path.exists(working_dir):
 interactive = True # for exploring data and functions interactively
 verbose = True
 
+log_info = "" # a global to append dataset processing info
+
 # dataset parameters
 all_channel_list = ['accel_x', 'accel_y', 'accel_z','accel_ttl','bvp','eda','p_temp']
 # frequency = 32 - unlike some of the other loaders this is hardcoded due to
@@ -104,6 +109,7 @@ xforms.stride = 32 # one second step for each sliding window
 # to avoid the confusion of shifing by 1 place, zero indexed etc.
 # Also this label map dict is setup to handle multi-labels but TWRristAR 
 # has only a single activity label.
+subj_alloc_dict = dict (train_subj = [1,2], valid_subj = [], test_subj = [3])
 label_map_twristar = {"label":     {"Downstairs": 0, "Jogging": 1, "Sitting": 2,
                                 "Standing": 3, "Upstairs": 4, "Walking": 5,
                                 "Undefined": 99}}
@@ -328,7 +334,6 @@ if interactive:
     print ("Label Counts - # samples before sliding window")
     print (ir1_df['label'].value_counts())
 
-#from pandas._libs.tslibs.parsing import try_parse_date_and_time
 def get_twristar_ir1_dict():
     """reads the TWRistAR dataset and converts each "session file" to an IR1
     dataframe.  The goal here is to capture and convert all raw data into
@@ -398,7 +403,7 @@ if interactive:
         break # just want one
     scripted = False # get the free-form walk IR1s instead
     ir1_dict = get_twristar_ir1_dict()
-    print('\nScripted IR1 dataframes:',ir1_dict.keys())
+    print('\nUnscripted IR1 dataframes:',ir1_dict.keys())
     for df_name, df in ir1_dict.items():
         display(df.head())
         break # just want one
@@ -409,22 +414,18 @@ if interactive:
 
 def twristar_load_dataset(
     incl_val_group = False, # split train into train and validate
-    split_subj = dict
-                (train_subj = [1,2],
-                valid_subj = [],
-                test_subj = [3]),
     keep_channel_list = ['accel_ttl'],
     one_hot_encode = False, # make y into multi-column one-hot, one for each activity
-    return_info_dict = False, # return dict of meta info along with ndarrays
     suppress_warn = False # special case for stratified warning
     ):
     """Downloads the TWristAR dataset from Zenodo, processes the data, and
     returns arrays by separating into _train, _validate, and _test arrays for
     X and y based on split_sub dictionary."""
+    global log_info
     log_info = "Generated by TWristAR_load_data.ipynb\n"
     today = date.today()
     log_info += today.strftime("%B %d, %Y") + "\n"
-    log_info += "sub dict = " + str(split_subj) + "\n"
+    log_info += "sub dict = " + str(subj_alloc_dict) + "\n"
     if scripted:  # this is a global variable in dataset params at top
         label_xform = 'drop' # for scripted activities used to train drop mixed
     else:
@@ -456,8 +457,8 @@ def twristar_load_dataset(
     # this code is different from typical due to limited subjects,
     # all not test subjects data is placed into train which is then 
     # split using stratification - validation group is not sub independent
-    train_index = np.nonzero(np.isin(sub_num, split_subj['train_subj'] + 
-                                        split_subj['valid_subj']))
+    train_index = np.nonzero(np.isin(sub_num, subj_alloc_dict['train_subj'] + 
+                                        subj_alloc_dict['valid_subj']))
     x_train = X[train_index]
     y_train = y[train_index]
     if (incl_val_group):
@@ -473,7 +474,7 @@ def twristar_load_dataset(
         # https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.train_test_split.html
         x_train, x_valid, y_train, y_valid = train_test_split(x_train, y_train, test_size=0.10, random_state=42, stratify=y_train)
 
-    test_index = np.nonzero(np.isin(sub_num, split_subj['test_subj']))
+    test_index = np.nonzero(np.isin(sub_num, subj_alloc_dict['test_subj']))
     x_test = X[test_index]
     y_test = y[test_index]
 
@@ -481,17 +482,11 @@ def twristar_load_dataset(
         log_info += utils.tabulate_numpy_arrays({'x_train': x_train, 'y_train': y_train,
                                        'x_valid': x_valid, 'y_valid': y_valid,
                                    'x_test': x_test, 'y_test': y_test})   
-        if (return_info_dict):
-            return x_train, y_train, x_valid, y_valid, x_test, y_test, log_info
-        else:
-            return x_train, y_train, x_valid, y_valid, x_test, y_test
+        return x_train, y_train, x_valid, y_valid, x_test, y_test
     else:
         log_info += utils.tabulate_numpy_arrays({'x_train': x_train, 'y_train': y_train,
                                    'x_test': x_test, 'y_test': y_test})
-        if (return_info_dict):
-            return x_train, y_train, x_test, y_test, log_info
-        else:
-            return x_train, y_train, x_test, y_test
+        return x_train, y_train, x_test, y_test
 
 """# Main is setup to be a demo and bit of unit test."""
 
@@ -524,25 +519,23 @@ if __name__ == "__main__":
     print ('\n','-'*72)
 
     print("Get TWristAR with validation group, info file, and four channels\n")
-    x_train, y_train, x_valid, y_valid, x_test, y_test, log_info \
+    x_train, y_train, x_valid, y_valid, x_test, y_test \
                              = twristar_load_dataset(
                                  incl_val_group = True,
                                  keep_channel_list = ['accel_ttl','bvp',
-                                                      'eda', 'p_temp'],
-                                 return_info_dict = True)
+                                                      'eda', 'p_temp'])
     print(utils.tabulate_numpy_arrays({'x_train': x_train, 'y_train': y_train,
                                        'x_valid': x_valid, 'y_valid': y_valid,
                                    'x_test': x_test, 'y_test': y_test}))
 
-    print("\n----------- Contents of returned log_info ---------------")
+    print("\n----------- Contents of log_info ---------------")
     print(log_info)
-    print("\n------------- End of returned log_info -----------------")
+    print("\n------------- End of log_info -----------------")
     print("Get TWristAR with validation group, no warn, and bvp only\n")
     x_train, y_train, x_valid, y_valid, x_test, y_test \
                              = twristar_load_dataset(
                                  incl_val_group = True,
                                  keep_channel_list = ['bvp'],
-                                 return_info_dict = False,
                                  suppress_warn = True)
     print("This is a no output config - silent execution")
     print(utils.tabulate_numpy_arrays({'x_train': x_train, 'y_train': y_train,
@@ -550,18 +543,17 @@ if __name__ == "__main__":
                                    'x_test': x_test, 'y_test': y_test}))
     print ('\n','-'*72)
     print("Get TWristAR with validation group, and accel only\n")
-    x_train, y_train, x_valid, y_valid, x_test, y_test, log_accelxyz\
+    x_train, y_train, x_valid, y_valid, x_test, y_test \
                              = twristar_load_dataset(
                                  incl_val_group = True,
                                  keep_channel_list = ['accel_x', 'accel_y', 'accel_z', 'accel_ttl'],
-                                 return_info_dict = True,
                                  suppress_warn = True)
     print(utils.tabulate_numpy_arrays({'x_train': x_train, 'y_train': y_train,
                                        'x_valid': x_valid, 'y_valid': y_valid,
                                    'x_test': x_test, 'y_test': y_test}))
-    print("\n----------- Contents of returned log_info ---------------")
-    print(log_accelxyz)
-    print("\n------------- End of returned log_info -----------------")
+    print("\n----------- Contents of log_info ---------------")
+    print(log_info)
+    print("\n------------- End of log_info -----------------")
     # Test the ability to get and process the unscripted free-form walks
     # These are generally treated as unlabeled sequences for our labeling work
     # It is setup so sub 1 walk is the train array, sub2 is the test array.
@@ -569,13 +561,10 @@ if __name__ == "__main__":
     scripted = False # this is a global variable assigned at begining
     print ('\n','-'*72)
     print("Get TWristAR Free-Form Walks - Test = Sub1, Train = Sub2\n")
-    x_train, y_train, x_test, y_test, log_accelxyz\
+    subj_alloc_dict = dict(train_subj = [1], valid_subj = [], test_subj = [2])
+    x_train, y_train, x_test, y_test \
                              = twristar_load_dataset(
-                                 split_subj = dict (train_subj = [1],
-                                                    valid_subj = [],
-                                                    test_subj = [2]),
                                  keep_channel_list = ['accel_x', 'accel_y', 'accel_z', 'accel_ttl'],
-                                 return_info_dict = True,
                                  suppress_warn = True)
     print(utils.tabulate_numpy_arrays({'x_train': x_train, 'y_train': y_train,
                                    'x_test': x_test, 'y_test': y_test}))
