@@ -100,7 +100,9 @@ def tabulate_numpy_arrays(dict_name_npy):
         meta_data.append ((i,str(dict_name_npy[i].shape),str(dict_name_npy[i].dtype)))
     return(tabulate(meta_data, headers=headers))
 
-"""# Shared transforms"""
+"""# IR1 Transforms
+Much of the conversion from raw data and/or csv files to IR1 is dataset unique but there are several IR1 transforms that are useful for multiple datasets and plotting etc.
+"""
 
 def assign_ints_ir1_labels(df, label_mapping_dict):
     """Uses the mapping in the passed dictionary to assign integers to each
@@ -139,6 +141,39 @@ if interactive:
     label_map_gps = {"label":     {"Rest": 0, "Preparation": 1, "Stroke": 2,
                                    "Hold": 3, "Retraction": 4}}
     ir1_df = assign_ints_ir1_labels(ir1_df, label_mapping_dict = label_map_gps)
+
+def convert_ir1_labels_to_strings(df,label_map):
+    """This method is derived from the previous IR2 version in xforms.
+    It is basically the reverse of assign_ints_ir1_labels()
+    It was developed for Leotta where the raw labels are integer encoded.
+    args:
+        df - an IR1 dataframe with integer encoded lables
+        label_map - dict with key = string, item = cooresponding int 
+    returns:
+        df - with categorical string labels"""
+    # this seems to work but only when run once?   Needs to be checked and
+    # moved to xforms notebook
+    str_to_key_dict = label_map['label']
+    key_to_str_dict = dict([(value, key) for key, value in str_to_key_dict.items()])
+    
+    if verbose:
+        "Converting integer encoded labels to strings"
+        print(str_to_key_dict)
+        print(key_to_str_dict)
+        print("Labels and counts before conversion")
+        print(df['label'].value_counts())
+
+    df['label'] = df['label'].map(key_to_str_dict)
+    df['label'] = df['label'].astype('category')
+
+    if verbose:
+        print("Labels and counts after conversion")
+        print(df['label'].value_counts())
+
+    return df
+if interactive:
+    df_string = convert_ir1_labels_to_strings(df = ir1_df, label_map = label_map_gps)
+    df_string.info()
 
 def to_fixed_ir1_timedelta(df_in, new_time_step='50ms'):
     """resamples an IR1 dataframe to new_time_step.  Labels must be int not
