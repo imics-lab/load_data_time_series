@@ -121,9 +121,10 @@ def assign_ints_ir1_labels(df, label_mapping_dict):
     # numpy arrays - not an issue for small datasets but a big memory user
     # for larger ones.
     # Credit to this nice writeup https://pbpython.com/categorical-encoding.html
+    if verbose:
+        print("assign_ints_ir1_labels() converting categorical strings to ints")
     for label_name in label_mapping_dict: 
-        if verbose:
-            print("assign_ints_ir1_labels() converting categorical strings to ints")
+        if verbose:  
             print("df["+label_name+"] value counts before")
             print(df[label_name].value_counts())
         df[label_name] = df[label_name].replace(label_mapping_dict[label_name])
@@ -138,6 +139,30 @@ if interactive:
     label_map_gps = {"label":     {"Rest": 0, "Preparation": 1, "Stroke": 2,
                                    "Hold": 3, "Retraction": 4}}
     ir1_df = assign_ints_ir1_labels(ir1_df, label_mapping_dict = label_map_gps)
+
+def to_fixed_ir1_timedelta(df_in, new_time_step='50ms'):
+    """resamples an IR1 dataframe to new_time_step.  Labels must be int not
+    categorical strings.  Will  return NaN per resample method (happens on
+    irregular samples). 'label' and 'sub' columns resample to floats and are
+    typed back to int16
+    args:
+        df_in - an IR1 format dataframe
+        new_time_step - string of pandas compatible times e.g. '50ms'
+    returns:
+        resampled pandas dataframe
+    Note this has only been tested as a downsample.  Also if the same sample
+    rate is given it can be used to 'correct' sample jitter in phone data"""
+    orig_rows = len(df_in.index)
+    df_out = df_in.resample(new_time_step).mean()
+    df_out = df_out.interpolate() #linear interpolation for nan
+    df_out['label'] = df_out['label'].astype(np.int8) # change from float to int
+    df_out['sub'] = df_out['sub'].astype(np.int8) # change from float to int
+    if verbose:
+        print("Resampled at ",new_time_step,": Original/New # rows = ",orig_rows,len(df_out.index))
+    return df_out
+if interactive:
+    df_temp = to_fixed_ir1_timedelta(ir1_df,new_time_step='20ms')
+    df_temp.info()
 
 def get_ir2_from_ir1(df):
     """slice the IR1 dataframe into sliding window segments of
@@ -234,9 +259,11 @@ def unify_ir2_labels(X, y, sub, ss_times, method = 'drop'):
      X,y,sub,ss_times:  IR2 df prior to collapsing X,y,sub,ss_times
      method: "drop" default - discard windows with mixed labels, typ train set
              "mode" - set all labels to mode value of labels in window
-     returns X,y,sub,ss_times IR2 df, y & sub shapes now (instances, 1)"""
+     returns X,y,sub,ss_times IR2 df with y & sub shapes now (instances, 1)"""
     # TODO: a threshold setting to determine which method would be nice.
+    # TODO: test/fix the drop for multi-label case
     # Not happy with this code, must be a better way but it seems to work...
+    # Also the interactive outputs should be integrated if verbose = True
     if method == 'drop':
         if verbose:
             print('Dropped windows(rows) with mixed labels:', sep = '',end='')
@@ -260,6 +287,8 @@ def unify_ir2_labels(X, y, sub, ss_times, method = 'drop'):
         # scipy stats seems to be the best for mode
         # https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.mode.html
         y, counts = st.mode(y, axis = 1, keepdims = True)
+        if (y.ndims == 3):
+            y = y[:,0,:] # collapse if multi-label (found testing PSG-Audio)
         # TODO: the counts could be used for threshold to drop if not enough
     # check subs, warn if delta and collapse
     for i in range(sub.shape[0]):
@@ -469,6 +498,8 @@ def limit_channel_ir3(ir3_X,
     # experiments and by channel feature representations.  I'm still torn on
     # whether dropping at IR1 would be better because it could be by column
     # name instead of list position.
+    # For PSG-Audio I've been working on drop_ir1_columns function to delete
+    # the known unused columns earlier in the process.
     # This is really new code, I'm leaving in some commented statements for now
     ch_idx = []
     # should add check here for channels not in list
