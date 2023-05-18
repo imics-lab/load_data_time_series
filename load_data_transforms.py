@@ -69,6 +69,8 @@ verbose = False # to limit the called functions output, overwrite per above
 
 """# Get IR1 dataframes for interactive testing.
 IMPORTANT: this code must be commented out when saving as .py!
+
+There is also nothing super special about the GPS dataset, it was just the one I was working on when I moved many of this functions to this file.
 """
 
 if interactive:
@@ -100,7 +102,7 @@ def tabulate_numpy_arrays(dict_name_npy):
         meta_data.append ((i,str(dict_name_npy[i].shape),str(dict_name_npy[i].dtype)))
     return(tabulate(meta_data, headers=headers))
 
-"""# IR1 Transforms
+"""# IR1 Pandas Dataframe Transforms
 Much of the conversion from raw data and/or csv files to IR1 is dataset unique but there are several IR1 transforms that are useful for multiple datasets and plotting etc.
 """
 
@@ -199,12 +201,46 @@ if interactive:
     df_temp = to_fixed_ir1_timedelta(ir1_df,new_time_step='20ms')
     df_temp.info()
 
+def drop_ir1_columns(df, drop_col_list):
+    """Used to remove IR1 columns, typically channels or labels that are not
+    required.   Benefit is that IR1 dataframes have named columns and by doing
+    this early it will save time and memory later.  There is a similar transform
+    for IR2/IR3 numpy arrays.   Hint:  To display full column list call with
+    empty drop_col_list and verbose = True
+    Args:
+        df = an IR1 format dataframe
+        drop_column_list = list of columns to drop ex ['accel_x','accel_y']
+    Returns:
+        df = updated IR1 sans columns"""
+    # this was originally in PSG-Audio - simple but minimally tested because I'm
+    # afraid there will be too many other dependencies that need to change.
+    # Updated/tested a version in Leotta before move into xforms.
+    # TODO:  a lot of error checking should be added here including reporting
+    # channels dropped and if a channel to be dropped wasn't found.
+    temp_all_cols = list(df)
+    keep_ch_list = [x for x in temp_all_cols if x not in drop_col_list]
+    if verbose:
+        print('drop_ir1_columns')
+        print('All',len(temp_all_cols),'IR1 columns:', temp_all_cols)
+        print('Dropping',len(drop_col_list),'columns:', drop_col_list)
+        print('Remaining',len(keep_ch_list),'columns:', keep_ch_list)
+    df = df[keep_ch_list]
+    return df
+if interactive:
+    example_drop_list = ['lhx','lhy','lhz','lwx','lwy','lwz']
+    display(ir1_df.head())
+    ir1_df = drop_ir1_columns(ir1_df, drop_col_list = example_drop_list)
+    ir1_df.info()
+    display(ir1_df.head())
+
+"""# Start of IR2 (Numpy Array) transforms"""
+
 def get_ir2_from_ir1(df):
     """slice the IR1 dataframe into sliding window segments of
     time_steps length and return X, y, sub, ss_times ndarrays.
     If stride = time_steps there is no overlap of the sliding window.
     This version does not use append, better for RAM
-    df: pandas datetime indexed dataframe columns - channel(s), label, sub
+    df: pandas datetime indexed dataframe columns - channel(s), label (as int), sub
     Global params used
     time_steps: number of samples in window, will discard a partial final window
     stride:  how far to move window, no overlap if equal to time_steps.
@@ -218,7 +254,7 @@ def get_ir2_from_ir1(df):
     """    
     # this was copied from SHL with improved memory capabilities
     # TODO:  Update with multi-label version from PSG-Audio
-    # TODO:  Should confirm datetimes are contiguous and warn if not.
+    # TODO:  Should confirm IR1 datetimes are contiguous and warn if not.
     
     # the channel list is in dataframe but not in the numpy arrays
     channel_list = list(df.columns)
@@ -251,9 +287,9 @@ def get_ir2_from_ir1(df):
         print('X,y,sub,ss_times array shapes after sliding window', X.shape, y.shape, sub.shape, ss_times.shape)
     return X, y, sub, ss_times, channel_list
 if interactive:
-    my_X, my_y, my_sub, my_ss_times, all_channel_list = get_ir2_from_ir1(ir1_df)
+    my_X, my_y, my_sub, my_ss_times, my_channel_list = get_ir2_from_ir1(ir1_df)
     print(tabulate_numpy_arrays({'my_X':my_X,'my_y':my_y,'my_sub':my_sub,'my_ss_times':my_ss_times}))
-    print("Returned all_channel_list", all_channel_list)
+    print("Returned my_channel_list", my_channel_list)
 
 def drop_ir2_nan(X, y, sub, ss_times):
     """removes sliding windows containing NaN, multiple labels, or multiple
