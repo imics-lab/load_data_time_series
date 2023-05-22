@@ -358,7 +358,7 @@ def unify_ir2_labels(X, y, sub, ss_times, method = 'drop'):
         # scipy stats seems to be the best for mode
         # https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.mode.html
         y, counts = st.mode(y, axis = 1, keepdims = True)
-        if (y.ndims == 3):
+        if (y.ndim == 3):
             y = y[:,0,:] # collapse if multi-label (found testing PSG-Audio)
         # TODO: the counts could be used for threshold to drop if not enough
     # check subs, warn if delta and collapse
@@ -492,6 +492,8 @@ def get_ir3_from_dict(ir1_dict, label_map, label_method = 'drop'):
     """
     # NOTE - this is really hard to debug since an ir1_dict is required.
     # I've been just working on it in the TWRistAR loader paste the working code here.
+    # Also this treats train and test the same - newer method being worked on
+    # in the Leotta loader.
     df_list = list(ir1_dict) # ir1_dict.keys() returns a dict_keys type
     col_list = list(ir1_dict[df_list[0]].columns) # all columns in df
     label_list = list(label_map) # in case of multi-labeled dataset
