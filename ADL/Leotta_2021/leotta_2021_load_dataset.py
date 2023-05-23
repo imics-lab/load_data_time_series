@@ -276,7 +276,7 @@ def one_hot_by_label_dict(y, label_map_in):
         print("y counts\n",np.asarray((unique, counts)).T)
     #all_categories = np.array([str(i) for i in range(len(label_map['label']))])
     all_categories = [[str(i) for i in range(len(label_map_in['label']))]]
-    enc = OneHotEncoder(categories = all_categories)
+    enc = OneHotEncoder(categories = all_categories, sparse = False)
     y_oh = enc.fit_transform(y)
     y_oh = y_oh.astype('uint8')
     if verbose:
