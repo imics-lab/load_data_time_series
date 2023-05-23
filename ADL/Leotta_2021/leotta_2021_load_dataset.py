@@ -26,7 +26,7 @@ Author:  [Lee B. Hinkle](https://userweb.cs.txstate.edu/~lbh31/), [IMICS Lab](ht
 <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/"><img alt="Creative Commons License" style="border-width:0" src="https://i.creativecommons.org/l/by-sa/4.0/88x31.png" /></a><br />This work is licensed under a <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">Creative Commons Attribution-ShareAlike 4.0 International License</a>.
 
 TODOs:
-* Integration of get_X_y_sub code and conversion to the more standard format in progress.
+* Dropping the 'other' label in train and valid arrays only works when one_hot_encode = True.   Need another method to drop based on integer encoding.
 """
 
 import os
@@ -283,6 +283,23 @@ def one_hot_by_label_dict(y, label_map_in):
         print("Shape of returned array", y_oh.shape)
     return y_oh
 
+# this should be moved to xforms once better tested and there should also be
+# a version for integer encoded labels
+def drop_ir2_one_hot_column(x, y, sub, ss_times, y_col_index = 0):
+    """Drops all windows where the one-hot column is 1.  Used to get rid of
+    labels in IR2 that should not be in train or valid set, e.g. 'other'
+    args:
+        x,y,sub,ss_times are all IR2 arrays with y already one-hot encoded
+        y_col_index = the y column to drop
+    returs:
+        updated IR2 arrays"""
+    remove_index = np.where(y[:,y_col_index]!=1) # the boolean on this is trippy
+    x = x[remove_index]
+    y = y[remove_index]
+    sub = sub[remove_index]
+    ss_times = ss_times[remove_index]
+    return x, y, sub, ss_times
+
 def leotta_2021_load_dataset(
     incl_val_group = False, # split train into train and validate
     one_hot_encode = False, # make y into multi-column one-hot encoded
@@ -367,6 +384,10 @@ def leotta_2021_load_dataset(
         y_train = one_hot_by_label_dict(y = y_train, label_map_in = label_map)
         y_valid = one_hot_by_label_dict(y = y_valid, label_map_in = label_map)
         y_test = one_hot_by_label_dict(y = y_test, label_map_in = label_map)
+
+        x_train, y_train, sub_train, ss_times_train = drop_ir2_one_hot_column(x_train, y_train, sub_train, ss_times_train, y_col_index = 0)
+        x_valid, y_valid, sub_valid, ss_times_valid = drop_ir2_one_hot_column(x_valid, y_valid, sub_valid, ss_times_valid, y_col_index = 0)
+
     
     if (incl_val_group):
         return x_train, y_train, x_valid, y_valid, x_test, y_test
