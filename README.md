@@ -8,10 +8,6 @@ This repository provides standardized numpy arrays from public datasets containi
 
 Our research focuses on biosignals analysis, including motion (accelerometer/gyroscope), ECG (cardiac electrical activity), EEG (brain electrical activity), EOG (eye movement), EMG (muscle activation), and EDA (skin conductance). These signals are typically sampled at frequencies ranging from 1 to 256 samples per second.
 
-## Getting Started
-
-For a quick introduction, start with the [HAR/load_dataset_demo.ipynb](HAR/load_dataset_demo.ipynb) notebook, which demonstrates the basic workflow for loading and using the datasets.
-
 ## Datasets
 
 This repository includes diverse time-series datasets across multiple domains:
@@ -176,7 +172,7 @@ Special thanks to the researchers who collected and published these datasets, ma
 ## Contact
 
 [Lee Hinkle](https://userweb.cs.txstate.edu/~lbh31/)  
-[Habib irani](https://userweb.cs.txstate.edu/~vux11/)
+[Habib irani](https://userweb.cs.txstate.edu/~vux11/) 
 [IMICS Research Group](https://imics-lab.github.io//)
 
 ## License
